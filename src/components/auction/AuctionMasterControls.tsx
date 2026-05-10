@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
 import { useAuction } from "./AuctionProvider"
 import { useApiAction } from "@/hooks/useApiAction"
 import { Button } from "@/components/ui/button"
@@ -12,7 +11,6 @@ import { roleIsAM } from "@/lib/role-utils"
 import { formatMoney } from "@/lib/utils"
 
 export function AuctionMasterControls() {
-  const router = useRouter()
   const { auction, currentLot, bids, teams, myRole, filledSlotsByTeam, refresh } = useAuction()
   const { post: apiPost, loading, error, setError } = useApiAction("/api/auction")
   const [confirmReset, setConfirmReset] = useState(false)
@@ -90,7 +88,7 @@ export function AuctionMasterControls() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Cancel failed."); return }
-      router.push("/auction")
+      window.location.href = "/auction"
     } finally {
       setCancelLoading(false)
     }
