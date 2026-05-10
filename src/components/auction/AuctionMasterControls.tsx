@@ -11,10 +11,13 @@ import { roleIsAM, roleIsAdmin } from "@/lib/role-utils"
 import { formatMoney } from "@/lib/utils"
 
 export function AuctionMasterControls() {
-  const { auction, currentLot, bids, teams, myRole, refresh } = useAuction()
+  const { auction, currentLot, bids, teams, myRole, filledSlotsByTeam, refresh } = useAuction()
   const { post: apiPost, loading, error, setError } = useApiAction("/api/auction")
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [cancelLoading, setCancelLoading] = useState(false)
+  const [confirmEndDraft, setConfirmEndDraft] = useState(false)
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
 
   type StagedTeam = { team_id: string; display_name: string; short_name: string; color: string; drops: { player_id: number; web_name: string; position: string }[] }
@@ -72,6 +75,24 @@ export function AuctionMasterControls() {
     }
   }
 
+  async function handleCancel() {
+    setCancelLoading(true)
+    setError(null)
+    setConfirmCancel(false)
+    try {
+      const res = await fetch("/api/auction/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auction_id: auction?.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? "Cancel failed."); return }
+      await refresh()
+    } finally {
+      setCancelLoading(false)
+    }
+  }
+
   const isAdmin = roleIsAdmin(myRole)
 
   // AM can reset auction to pre-start snapshot; admin can also do full wipe (no auction)
@@ -109,6 +130,48 @@ export function AuctionMasterControls() {
       )}
     </div>
   )
+
+  // Cancel section — shown for pending and active auctions
+  const cancelSection = auction ? (
+    <div className="space-y-1.5">
+      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Cancel Auction</p>
+      {confirmCancel ? (
+        <div className="space-y-1.5">
+          <p className="text-xs text-destructive">
+            {auction.status === "active"
+              ? "This will restore all rosters and budgets to their pre-auction state and delete the auction. Are you sure?"
+              : "This will delete the pending auction. No roster changes will be made. Are you sure?"}
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" variant="destructive" className="flex-1" disabled={cancelLoading} onClick={handleCancel}>
+              Yes, cancel auction
+            </Button>
+            <Button size="sm" variant="outline" className="flex-1" disabled={cancelLoading} onClick={() => setConfirmCancel(false)}>
+              Keep it
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button
+          size="sm"
+          variant="outline"
+          className="w-full text-muted-foreground hover:text-destructive hover:border-destructive/50"
+          disabled={cancelLoading}
+          onClick={() => setConfirmCancel(true)}
+        >
+          Cancel Auction
+        </Button>
+      )}
+    </div>
+  ) : undefined
+
+  // End-draft eligibility — all teams need SQUAD_RULES.total players
+  const totalByTeam = teams.map(t => {
+    const filled = filledSlotsByTeam[t.id] ?? {}
+    return Object.values(filled).reduce((s, n) => s + n, 0)
+  })
+  const teamsIncomplete = totalByTeam.filter(n => n < 15).length
+  const canEndDraft = teamsIncomplete === 0
 
   // ── No auction yet ────────────────────────────────────────────────────────
   if (!auction) {
@@ -234,6 +297,7 @@ export function AuctionMasterControls() {
           </Button>
         </div>
         {error && <p className="text-xs text-destructive mt-2">{error}</p>}
+        {cancelSection && <><Separator className="my-3" />{cancelSection}</>}
       </AMCard>
     )
   }
@@ -248,10 +312,48 @@ export function AuctionMasterControls() {
             <span className="text-foreground font-medium">{auction.current_position_category}</span>
           </p>
         </div>
-        <p className="text-xs text-muted-foreground italic">
+        <p className="text-xs text-muted-foreground italic mb-3">
           Click "Nominate" on a player in the list to open a lot.
         </p>
+
+        {/* End Draft */}
+        <div className="space-y-1.5">
+          {canEndDraft ? (
+            confirmEndDraft ? (
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground">All squads are complete. End the draft and close the auction?</p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    disabled={loading}
+                    onClick={async () => { setConfirmEndDraft(false); await post("end-draft", { auction_id: auction.id }) }}
+                  >
+                    Yes, end draft
+                  </Button>
+                  <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmEndDraft(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={() => setConfirmEndDraft(true)}
+              >
+                End Draft
+              </Button>
+            )
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {teamsIncomplete} team{teamsIncomplete !== 1 ? "s" : ""} still need players before the draft can end.
+            </p>
+          )}
+        </div>
+
         {error && <p className="text-xs text-destructive mt-2">{error}</p>}
+        {cancelSection && <><Separator className="my-3" />{cancelSection}</>}
       </AMCard>
     )
   }

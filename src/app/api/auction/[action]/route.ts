@@ -36,6 +36,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       case "assign-player":    return handleAssignPlayer(request)
       case "undo-bid":         return handleUndoBid(request)
       case "reset-timer":      return handleResetTimer(request)
+      case "cancel":           return handleCancel(request)
+      case "end-draft":        return handleEndDraft(request)
       default:
         return err(`Unknown action: ${action}`, 404)
     }
@@ -859,4 +861,137 @@ async function autoAssign(supabase: any, lot: any, auction: any, teamId: string,
     price,
     new_budget: newBudget,
   })
+}
+
+// ─────────────────────────────────────────────
+// SHARED HELPER — restore league state from pre-auction snapshot
+// ─────────────────────────────────────────────
+export async function restoreFromSnapshot(auction_id: string, supabase: ReturnType<typeof createClient>): Promise<{ restored: true } | { error: string }> {
+  const { data: snapshotRow } = await supabase
+    .from("auction_snapshots")
+    .select("snapshot")
+    .eq("auction_id", auction_id)
+    .single()
+
+  if (!snapshotRow) return { error: "No snapshot found for this auction." }
+
+  const snap = snapshotRow.snapshot as {
+    teams: { id: string; budget: number }[]
+    roster_entries: {
+      id: string; team_id: string; player_id: number; slot_type: string
+      bench_order: number | null; is_captain: boolean; is_vice_captain: boolean; base_price: number
+    }[]
+    players: { id: number; base_price: number }[]
+    team_drops: {
+      id: string; team_id: string; player_id: number; drop_price: number | null
+      status: string; dropped_post_january: boolean; dropped_post_summer: boolean
+      penalty_gameweek: number | null
+    }[]
+  }
+
+  // Restore team budgets
+  for (const team of snap.teams) {
+    await supabase.from("teams").update({ budget: team.budget }).eq("id", team.id)
+  }
+
+  // Restore player base prices
+  for (const player of snap.players) {
+    await supabase.from("players").update({ base_price: player.base_price }).eq("id", player.id)
+  }
+
+  // Restore roster entries
+  const teamIds = [...new Set(snap.roster_entries.map(r => r.team_id))]
+  if (teamIds.length > 0) {
+    await supabase.from("roster_entries").delete().in("team_id", teamIds)
+  }
+  if (snap.roster_entries.length > 0) {
+    await supabase.from("roster_entries").insert(snap.roster_entries)
+  }
+
+  // Restore staged drops
+  await supabase.from("team_drops").delete().eq("auction_id", auction_id)
+  if (snap.team_drops.length > 0) {
+    const dropsToRestore = snap.team_drops.map(d => ({ ...d, auction_id, status: "staged" }))
+    await supabase.from("team_drops").insert(dropsToRestore)
+  }
+
+  return { restored: true }
+}
+
+// ─────────────────────────────────────────────
+// CANCEL — delete a pending or active auction, restoring snapshot if active
+// Body: { auction_id: string }
+// ─────────────────────────────────────────────
+async function handleCancel(request: NextRequest) {
+  await requireRole("auction_master")
+  const supabase = createClient()
+  const { auction_id } = await request.json()
+  if (!auction_id) return err("auction_id required.")
+
+  const { data: auction } = await supabase
+    .from("auctions").select("status").eq("id", auction_id).single()
+  if (!auction) return err("Auction not found.", 404)
+  if (!["pending", "active"].includes(auction.status)) return err("Only pending or active auctions can be cancelled.")
+
+  // If active, restore from snapshot first
+  if (auction.status === "active") {
+    const result = await restoreFromSnapshot(auction_id, supabase)
+    if ("error" in result) return err(result.error, 404)
+  }
+
+  // Delete the auction (cascades to lots, bids, log, transfer records, snapshot)
+  const { error: deleteErr } = await supabase.from("auctions").delete().eq("id", auction_id)
+  if (deleteErr) return err(deleteErr.message)
+
+  return NextResponse.json({ success: true })
+}
+
+// ─────────────────────────────────────────────
+// END-DRAFT — mark auction as completed once all teams have full squads
+// Body: { auction_id: string }
+// ─────────────────────────────────────────────
+async function handleEndDraft(request: NextRequest) {
+  await requireRole("auction_master")
+  const supabase = createClient()
+  const { auction_id } = await request.json()
+  if (!auction_id) return err("auction_id required.")
+
+  const { data: auction } = await supabase
+    .from("auctions").select("status").eq("id", auction_id).single()
+  if (!auction) return err("Auction not found.", 404)
+  if (auction.status !== "active") return err("Auction is not active.")
+
+  // Check no lot is currently open
+  const { data: openLot } = await supabase
+    .from("auction_lots")
+    .select("id")
+    .eq("auction_id", auction_id)
+    .in("phase", ["interest", "bidding"])
+    .maybeSingle()
+  if (openLot) return err("A lot is currently open. Close it before ending the draft.")
+
+  // Validate all teams have 15 players
+  const { data: teams } = await supabase.from("teams").select("id, display_name")
+  const { data: roster } = await supabase
+    .from("roster_entries")
+    .select("team_id")
+    .in("slot_type", ["starting", "bench"])
+
+  const countByTeam: Record<string, number> = {}
+  for (const row of roster ?? []) {
+    countByTeam[row.team_id] = (countByTeam[row.team_id] ?? 0) + 1
+  }
+
+  const incomplete = (teams ?? []).filter(t => (countByTeam[t.id] ?? 0) < SQUAD_RULES.total)
+  if (incomplete.length > 0) {
+    return err(`${incomplete.length} team(s) still need players: ${incomplete.map(t => t.display_name).join(", ")}`)
+  }
+
+  const { error } = await supabase
+    .from("auctions")
+    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .eq("id", auction_id)
+
+  if (error) return err(error.message)
+  return NextResponse.json({ success: true })
 }
