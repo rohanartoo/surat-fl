@@ -21,6 +21,7 @@ export function AuctionMasterControls() {
   const [cancelLoading, setCancelLoading] = useState(false)
   const [confirmEndDraft, setConfirmEndDraft] = useState(false)
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
+  const [excludedTeamIds, setExcludedTeamIds] = useState<string[]>([])
 
   type StagedTeam = { team_id: string; display_name: string; short_name: string; color: string; drops: { player_id: number; web_name: string; position: string }[] }
   const [stagedDropTeams, setStagedDropTeams] = useState<StagedTeam[]>([])
@@ -213,12 +214,23 @@ export function AuctionMasterControls() {
       ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
       setLocalOrder(next)
     }
+    function removeTeam(teamId: string) {
+      const next = displayOrder.filter(id => id !== teamId)
+      setLocalOrder(next)
+      setExcludedTeamIds(prev => [...prev, teamId])
+    }
+    function addTeamBack(teamId: string) {
+      setLocalOrder([...(localOrder ?? savedOrder.filter(id => !excludedTeamIds.includes(id))), teamId])
+      setExcludedTeamIds(prev => prev.filter(id => id !== teamId))
+    }
 
     async function saveOrder() {
       if (!localOrder) return
       await post("set-order", { auction_id: auction!.id, order: localOrder })
       setLocalOrder(null)
     }
+
+    const excludedTeams = excludedTeamIds.map(id => teams.find(t => t.id === id)).filter(Boolean) as typeof teams
 
     return (
       <AMCard title="Auction Master" resetSection={resetSection}>
@@ -244,9 +256,33 @@ export function AuctionMasterControls() {
                 disabled={i === orderedTeams.length - 1 || loading}
                 onClick={() => moveDown(i)}
               >↓</button>
+              <button
+                className="text-muted-foreground hover:text-destructive text-xs px-1 disabled:opacity-30"
+                disabled={loading}
+                onClick={() => removeTeam(team.id)}
+                title="Remove from auction"
+              >×</button>
             </div>
           ))}
         </div>
+
+        {excludedTeams.length > 0 && (
+          <div className="mb-3">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1.5">Not participating</p>
+            <div className="space-y-1">
+              {excludedTeams.map(team => (
+                <div key={team.id} className="flex items-center gap-2 py-1 px-2 rounded bg-secondary/20 opacity-60">
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
+                  <span className="text-sm flex-1 line-through text-muted-foreground">{team.short_name}</span>
+                  <button
+                    className="text-muted-foreground hover:text-foreground text-xs px-1"
+                    onClick={() => addTeamBack(team.id)}
+                  >+ Add back</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Staged drops detail for non-initial auctions */}
         {auction.type !== "initial" && stagedDropTeams.length > 0 && (

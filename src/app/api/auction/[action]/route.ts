@@ -218,9 +218,8 @@ async function handleOpenLot(request: NextRequest) {
 
   // ── Initial auction: skip interest phase, auto-enroll eligible teams ────────
   if (auction.type === "initial") {
-    // Determine which teams have an open slot for this position
-    const { data: teams } = await supabase.from("teams").select("id")
-    const allTeamIds = (teams ?? []).map(t => t.id as string)
+    // Determine which teams have an open slot for this position (scoped to auction_order)
+    const allTeamIds = auctionOrder
 
     const { data: rosterRows } = await supabase
       .from("roster_entries")
@@ -956,7 +955,7 @@ async function handleEndDraft(request: NextRequest) {
   if (!auction_id) return err("auction_id required.")
 
   const { data: auction } = await supabase
-    .from("auctions").select("status").eq("id", auction_id).single()
+    .from("auctions").select("status, auction_order").eq("id", auction_id).single()
   if (!auction) return err("Auction not found.", 404)
   if (auction.status !== "active") return err("Auction is not active.")
 
@@ -969,8 +968,9 @@ async function handleEndDraft(request: NextRequest) {
     .maybeSingle()
   if (openLot) return err("A lot is currently open. Close it before ending the draft.")
 
-  // Validate all teams have 15 players
-  const { data: teams } = await supabase.from("teams").select("id, display_name")
+  // Validate all participating teams (in auction_order) have 15 players
+  const participatingTeamIds = (auction.auction_order as string[]) ?? []
+  const { data: teams } = await supabase.from("teams").select("id, display_name").in("id", participatingTeamIds)
   const { data: roster } = await supabase
     .from("roster_entries")
     .select("team_id")
