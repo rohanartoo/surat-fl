@@ -21,9 +21,11 @@ export default async function DashboardPage() {
     new Set(standings.flatMap(r => Object.keys(r.by_gameweek).map(Number)))
   ).sort((a, b) => a - b)
 
+  const seasonStart = new Date().getMonth() + 1 >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1
+  const season = `${seasonStart}/${String(seasonStart + 1).slice(-2)}`
   const subtitle = currentGw
-    ? `Gameweek ${currentGw} · 2025/26 season`
-    : "2025/26 season"
+    ? `Gameweek ${currentGw} · ${season} season`
+    : `${season} season`
 
   return (
     <div className="space-y-6">
