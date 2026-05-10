@@ -43,6 +43,7 @@ export function Nav({ displayName, role }: NavProps) {
   const supabase = createClient()
 
   async function signOut() {
+    localStorage.removeItem("surat_chat_guest_name")
     await supabase.auth.signOut()
     router.push("/login")
     router.refresh()
