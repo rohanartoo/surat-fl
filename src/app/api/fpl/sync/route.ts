@@ -39,7 +39,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ synced: players.length, ok: true })
   } catch (err) {
     console.error("[fpl/sync] error:", err)
-    const message = err instanceof Error ? err.message : String(err)
+    const message = err instanceof Error
+      ? err.message
+      : typeof err === "object"
+        ? JSON.stringify(err)
+        : String(err)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
