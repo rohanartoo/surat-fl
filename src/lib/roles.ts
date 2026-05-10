@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import { cache } from "react"
 import type { Role } from "@/types"
+import { ROLE_LEVEL } from "@/lib/role-utils"
 
 /**
  * Role hierarchy (highest to lowest):
@@ -10,13 +11,6 @@ import type { Role } from "@/types"
  * Admin is a superset of auction_master — any check for 'auction_master'
  * will also pass for 'admin'.
  */
-
-const ROLE_LEVEL: Record<Role, number> = {
-  admin:          4,
-  auction_master: 3,
-  team:           2,
-  guest:          1,
-}
 
 /** Returns the current user's profile row, or null if unauthenticated. */
 export const getProfile = cache(async () => {
@@ -100,15 +94,18 @@ export async function requireRole(minRole: Role): Promise<void> {
   }
 }
 
-/** Client-side role check helper (pass role from server props). */
-export function roleCanEdit(role: Role): boolean {
-  return ROLE_LEVEL[role] >= ROLE_LEVEL["team"]
-}
+// Pure client-safe helpers re-exported from role-utils
+export { roleIsAM, roleIsAdmin } from "@/lib/role-utils"
 
-export function roleIsAM(role: Role): boolean {
-  return ROLE_LEVEL[role] >= ROLE_LEVEL["auction_master"]
-}
-
-export function roleIsAdmin(role: Role): boolean {
-  return role === "admin"
+/**
+ * Verifies the current user owns the given team (or is admin).
+ * Throws a role error if not. Use in API route handlers before any write.
+ */
+export async function assertOwnership(teamId: string) {
+  const profile = await getProfile()
+  if (!profile) throw new Error("Requires role: team")
+  if (profile.role !== "admin" && profile.team_id !== teamId) {
+    throw new Error("Requires role: team")
+  }
+  return profile
 }

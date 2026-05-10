@@ -1,7 +1,7 @@
 export type Position = "GK" | "DEF" | "MID" | "FWD"
 export type Role = "admin" | "auction_master" | "team" | "guest"
 export type SlotType = "starting" | "bench" | "dropped"
-export type AuctionType = "initial" | "mini" | "post_jan"
+export type AuctionType = "initial" | "mini" | "post_jan" | "post_summer"
 export type AuctionStatus = "pending" | "active" | "completed"
 export type LotPhase = "pending" | "interest" | "bidding" | "concluded"
 export type DropStatus = "staged" | "locked" | "cancelled"
@@ -17,6 +17,8 @@ export const SQUAD_RULES = {
   slots: { GK: 2, DEF: 5, MID: 5, FWD: 3 } as Record<Position, number>,
   /** Minimum players per position in the starting XI */
   min_starting: { GK: 1, DEF: 3, MID: 3, FWD: 1 } as Record<Position, number>,
+  /** Maximum players per position in the starting XI (GK capped at 1; others capped by squad size) */
+  max_starting: { GK: 1, DEF: 5, MID: 5, FWD: 3 } as Record<Position, number>,
   /** Minimum base price for any player */
   min_bid: 1,
 } as const
@@ -35,6 +37,8 @@ export const DROP_RULES = {
   free_drops_first_inseason: 3,
   /** Post-January transfer window auction */
   free_drops_post_jan: 3,
+  /** Post-summer transfer window auction */
+  free_drops_post_summer: 3,
   /** All other mini-auctions */
   free_drops_standard: 2,
   /** Max unused free transfers that roll over */
@@ -184,6 +188,7 @@ export interface AuctionLot {
   timer_started_at: string | null
   current_bid: number | null
   current_bidder_id: string | null
+  current_turn_team_id: string | null
   bid_start_team_index: number
   winning_team_id: string | null
   winning_bid: number | null
@@ -219,6 +224,7 @@ export interface TeamDrop {
   drop_price: number | null
   status: DropStatus
   dropped_post_january: boolean
+  dropped_post_summer: boolean
   penalty_gameweek: number | null
   created_at: string
   player?: Player
@@ -239,7 +245,7 @@ export interface GameweekPoints {
   id: string
   team_id: string
   gameweek: number
-  player_id: number
+  player_id: number | null  // null for drop-penalty rows
   points: number
   was_subbed_in: boolean
   created_at: string

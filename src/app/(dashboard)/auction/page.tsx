@@ -1,179 +1,205 @@
 import { createClient } from "@/lib/supabase/server"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { getProfile } from "@/lib/roles"
+import { AuctionProvider } from "@/components/auction/AuctionProvider"
+import { AuctionMasterControls } from "@/components/auction/AuctionMasterControls"
+import { CentralConsole } from "@/components/auction/CentralConsole"
+import { TeamBidConsole, MyActionPanel } from "@/components/auction/TeamBidConsole"
+import { PlayerSelectionPanel } from "@/components/auction/PlayerSelectionPanel"
+import { AuctionLog } from "@/components/auction/AuctionLog"
+import { BidResultPanel } from "@/components/auction/BidResultPanel"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { formatMoney, positionColor, cn } from "@/lib/utils"
-import type { Player } from "@/types"
+import { cn } from "@/lib/utils"
+import type {
+  Auction,
+  AuctionLot,
+  AuctionLogEntry,
+  Bid,
+  LeagueTeam,
+  Player,
+  Position,
+  Role,
+} from "@/types"
 
-async function getAuctionData() {
+async function getPageData() {
   const supabase = await createClient()
+  const profile = await getProfile()
 
-  const { data: players } = await supabase
-    .from("players")
-    .select("*")
-    .not("id", "in", `(select player_id from roster_entries where is_active = true)`)
-    .order("selected_by_percent", { ascending: false })
+  const [
+    { data: auctionData },
+    { data: teamsData },
+  ] = await Promise.all([
+    supabase.from("auctions").select("*").in("status", ["pending", "active"]).maybeSingle(),
+    supabase.from("teams").select("*").order("auction_order"),
+  ])
 
-  const { data: teams } = await supabase
-    .from("teams")
-    .select("id, name, short_name, budget")
-    .order("name")
+  const auction = auctionData as Auction | null
+  const teams = (teamsData ?? []) as LeagueTeam[]
 
-  const { data: activeAuction } = await supabase
-    .from("auctions")
-    .select("*, lots:auction_lots(*, player:players(*), bids(*, team:teams(*)))")
-    .eq("status", "active")
-    .maybeSingle()
+  let currentLot: (AuctionLot & { player: Player }) | null = null
+  let lastConcludedLot: (AuctionLot & { player: Player }) | null = null
+  let bids: Bid[] = []
+  let log: AuctionLogEntry[] = []
+
+  if (auction) {
+    const [lotResult, logResult] = await Promise.all([
+      supabase
+        .from("auction_lots")
+        .select("*, player:players(*)")
+        .eq("auction_id", auction.id)
+        .in("phase", ["interest", "bidding"])
+        .maybeSingle(),
+      supabase
+        .from("auction_log")
+        .select("*")
+        .eq("auction_id", auction.id)
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ])
+
+    currentLot = lotResult.data as (AuctionLot & { player: Player }) | null
+    log = (logResult.data ?? []) as AuctionLogEntry[]
+
+    if (currentLot) {
+      const { data: bidsData } = await supabase
+        .from("bids").select("*, team:teams(*)").eq("lot_id", currentLot.id)
+      bids = (bidsData ?? []) as Bid[]
+    } else {
+      // No active lot — fetch last concluded for the result panel
+      const { data: lastLot } = await supabase
+        .from("auction_lots")
+        .select("*, player:players(*)")
+        .eq("auction_id", auction.id)
+        .eq("phase", "concluded")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      lastConcludedLot = lastLot as (AuctionLot & { player: Player }) | null
+    }
+  }
+
+  // Player pool — always shown, filtered by current position if auction active
+  const { data: draftedRows } = await supabase
+    .from("roster_entries").select("player_id").in("slot_type", ["starting", "bench"])
+
+  const draftedIds = (draftedRows ?? []).map(r => r.player_id) as number[]
+  const currentPos = (auction?.current_position_category ?? null) as Position | null
+
+  let playersQuery = supabase.from("players").select("*").order("total_points", { ascending: false })
+  if (draftedIds.length > 0) {
+    playersQuery = playersQuery.not("id", "in", `(${draftedIds.join(",")})`)
+  }
+  if (currentPos) {
+    playersQuery = playersQuery.eq("position", currentPos)
+  }
+  const { data: playersData } = await playersQuery
+  const availablePlayers = (playersData ?? []) as Player[]
+
+  // Filled slot counts per team per position
+  const { data: allRosterEntries } = await supabase
+    .from("roster_entries").select("team_id, player:players(position)").in("slot_type", ["starting", "bench"])
+
+  const filledSlotsByTeam: Record<string, Record<Position, number>> = {}
+  for (const team of teams) {
+    filledSlotsByTeam[team.id] = { GK: 0, DEF: 0, MID: 0, FWD: 0 }
+  }
+  for (const entry of allRosterEntries ?? []) {
+    const player = entry.player as unknown as { position: Position } | null
+    const pos = player?.position
+    if (pos && filledSlotsByTeam[entry.team_id]) {
+      filledSlotsByTeam[entry.team_id][pos]++
+    }
+  }
 
   return {
-    availablePlayers: players ?? [],
-    teams: teams ?? [],
-    activeAuction,
+    auction,
+    currentLot,
+    lastConcludedLot,
+    bids,
+    log,
+    teams,
+    availablePlayers,
+    filledSlotsByTeam,
+    myTeamId: profile?.team_id ?? null,
+    myRole: (profile?.role ?? "guest") as Role,
   }
 }
 
-function PlayerListItem({ player }: { player: Player }) {
-  return (
-    <div className="flex items-center justify-between py-3 px-4 hover:bg-accent/40 transition-colors cursor-pointer rounded-md">
-      <div className="flex items-center gap-3">
-        <Badge
-          variant="outline"
-          className={cn("text-xs w-10 justify-center font-medium border-0 bg-secondary shrink-0", positionColor(player.position))}
-        >
-          {player.position}
-        </Badge>
-        <div>
-          <p className="text-sm font-medium leading-none">{player.web_name}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{player.fpl_team_short}</p>
-        </div>
-      </div>
-      <div className="text-right shrink-0 ml-4">
-        <p className="text-xs font-mono font-medium">{player.selected_by_percent.toFixed(1)}%</p>
-        <p className="text-xs text-muted-foreground">selected</p>
-      </div>
-    </div>
-  )
-}
-
 export default async function AuctionPage() {
-  const { availablePlayers, teams, activeAuction } = await getAuctionData()
+  const {
+    auction,
+    currentLot,
+    lastConcludedLot,
+    bids,
+    log,
+    teams,
+    availablePlayers,
+    filledSlotsByTeam,
+    myTeamId,
+    myRole,
+  } = await getPageData()
 
-  const positions = ["All", "GK", "DEF", "MID", "FWD"] as const
+  const isLive = auction?.status === "active"
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Auction</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {availablePlayers.length} available players
-          </p>
-        </div>
-        <Badge
-          variant={activeAuction ? "default" : "outline"}
-          className={cn("mt-1", activeAuction && "bg-emerald-500 hover:bg-emerald-500")}
-        >
-          {activeAuction ? "Live" : "No active auction"}
-        </Badge>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Available players panel */}
-        <div className="lg:col-span-2 space-y-4">
-          <Card className="border-border/60">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Available Players</CardTitle>
-              </div>
-              <div className="flex gap-2 mt-2">
-                <Input placeholder="Search player…" className="h-8 text-sm" />
-                <Select defaultValue="All">
-                  <SelectTrigger className="h-8 w-32 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {positions.map((p) => (
-                      <SelectItem key={p} value={p}>{p}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardHeader>
-            <CardContent className="p-2">
-              {availablePlayers.length === 0 ? (
-                <div className="space-y-1 p-2">
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="flex items-center gap-3 py-3 px-2">
-                      <Skeleton className="h-5 w-10" />
-                      <div className="space-y-1.5">
-                        <Skeleton className="h-4 w-24" />
-                        <Skeleton className="h-3 w-16" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="max-h-[500px] overflow-y-auto">
-                  {availablePlayers.map((player: Player) => (
-                    <PlayerListItem key={player.id} player={player} />
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+    <AuctionProvider
+      initialAuction={auction}
+      initialLot={currentLot}
+      initialLastConcludedLot={lastConcludedLot}
+      initialBids={bids}
+      initialLog={log}
+      initialTeams={teams}
+      initialAvailablePlayers={availablePlayers}
+      initialFilledSlotsByTeam={filledSlotsByTeam}
+      myTeamId={myTeamId}
+      myRole={myRole}
+    >
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Auction</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {auction
+                ? `${auction.type.replace("_", "-")} auction — ${auction.current_position_category ?? "setup"}`
+                : "No auction in progress"}
+            </p>
+          </div>
+          <Badge
+            variant={isLive ? "default" : "outline"}
+            className={cn("mt-1", isLive && "bg-emerald-500 hover:bg-emerald-500 text-white")}
+          >
+            {isLive ? "Live" : auction?.status === "pending" ? "Pending" : "No active auction"}
+          </Badge>
         </div>
 
-        {/* Right panel: teams budget + active lot */}
-        <div className="space-y-4">
-          {/* Active lot */}
-          {activeAuction ? (
-            <Card className="border-emerald-500/30 bg-emerald-500/5">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-emerald-500">Currently bidding</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground text-sm">Auction lot details will appear here</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card className="border-border/60 border-dashed">
-              <CardContent className="py-8 text-center">
-                <p className="text-sm text-muted-foreground">No active auction</p>
-                <p className="text-xs text-muted-foreground mt-1">Start an auction to begin bidding</p>
-              </CardContent>
-            </Card>
-          )}
+        {/* Main layout: 3 columns on large screens */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px_280px] gap-6 items-start">
 
-          {/* Team budgets */}
-          <Card className="border-border/60">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Team Budgets</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 p-3">
-              {teams.length === 0 ? (
-                Array.from({ length: 7 }).map((_, i) => (
-                  <div key={i} className="flex justify-between items-center p-1">
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-4 w-12" />
-                  </div>
-                ))
-              ) : (
-                teams.map((team: { id: string; name: string; short_name: string; budget: number }) => (
-                  <div key={team.id} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-accent/40 transition-colors">
-                    <span className="text-sm">{team.short_name}</span>
-                    <span className="text-sm font-mono font-medium text-emerald-500">
-                      {formatMoney(team.budget)}
-                    </span>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+          {/* Left: player pool */}
+          <div className="space-y-4">
+            <PlayerSelectionPanel />
+          </div>
+
+          {/* Centre: action panel → lot stats → bid rows (bid rows only for admin/AM) */}
+          <div className="space-y-4">
+            <MyActionPanel />
+            <CentralConsole />
+            {myRole !== "team" && myRole !== "guest" && (
+              <TeamBidConsole />
+            )}
+          </div>
+
+          {/* Right: AM controls → log → last result → bid rows (teams + guests see bids here) */}
+          <div className="space-y-4">
+            <AuctionMasterControls />
+            <AuctionLog />
+            <BidResultPanel />
+            {(myRole === "team" || myRole === "guest") && (
+              <TeamBidConsole />
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </AuctionProvider>
   )
 }

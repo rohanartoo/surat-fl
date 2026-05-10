@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createClient as createSupabaseClient } from "@supabase/supabase-js"
 import { fetchFplBootstrap, mapFplPlayer } from "@/lib/fpl"
 
 export async function POST(request: Request) {
@@ -10,7 +10,10 @@ export async function POST(request: Request) {
 
   try {
     const bootstrap = await fetchFplBootstrap()
-    const supabase = await createClient()
+    const supabase = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
 
     const teamMap = bootstrap.teams.reduce<Record<number, { name: string; short_name: string }>>(
       (acc, t) => { acc[t.id] = { name: t.name, short_name: t.short_name }; return acc },
@@ -27,12 +30,16 @@ export async function POST(request: Request) {
         .from("players")
         .upsert(batch, { onConflict: "id" })
 
-      if (error) throw error
+      if (error) {
+        console.error("[fpl/sync] upsert error:", JSON.stringify(error))
+        throw error
+      }
     }
 
     return NextResponse.json({ synced: players.length, ok: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error"
+    console.error("[fpl/sync] error:", err)
+    const message = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
