@@ -8,7 +8,7 @@ A private fantasy football league app for 7 teams, built on top of FPL (Fantasy 
 Tech stack: Next.js 16 (App Router), Supabase (Postgres + Auth + Realtime), Tailwind CSS, shadcn/ui.
 
 ## Key files to orient yourself
-- `INITIAL_IMPLEMENTATION.md` — the full feature spec and phase plan. **All planning goes here.**
+- `docs/INITIAL_IMPLEMENTATION.md` — the full feature spec and phase plan. **All planning goes here.**
 - `memory/project_phase_status.md` — which phases are complete and what's pending.
 
 ## Auth
