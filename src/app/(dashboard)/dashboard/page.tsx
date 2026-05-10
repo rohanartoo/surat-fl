@@ -16,8 +16,8 @@ async function getLeagueOverview() {
 
   const { data: rosters } = await supabase
     .from("roster_entries")
-    .select("team_id, player:players(position, purchase_price)")
-    .eq("is_active", true)
+    .select("team_id")
+    .in("slot_type", ["starting", "bench"])
 
   return { teams: teams ?? [], rosters: rosters ?? [] }
 }
