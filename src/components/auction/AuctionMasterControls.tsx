@@ -16,23 +16,25 @@ export function AuctionMasterControls() {
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
-  const [stagedDropCounts, setStagedDropCounts] = useState<Record<string, number>>({})
 
-  // Fetch staged drop counts when auction is pending and non-initial
+  type StagedTeam = { team_id: string; display_name: string; short_name: string; color: string; drops: { player_id: number; web_name: string; position: string }[] }
+  const [stagedDropTeams, setStagedDropTeams] = useState<StagedTeam[]>([])
+
+  // Fetch staged drop details when auction is pending and non-initial
   useEffect(() => {
     if (!auction || auction.status !== "pending" || auction.type === "initial") {
-      setStagedDropCounts({})
+      setStagedDropTeams([])
       return
     }
     const fetchDrops = async () => {
-      const res = await fetch("/api/drops/staged-counts", {
+      const res = await fetch("/api/drops/staged-detail", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ auction_id: auction.id }),
       })
       if (res.ok) {
         const data = await res.json()
-        setStagedDropCounts(data.counts ?? {})
+        setStagedDropTeams(data.teams ?? [])
       }
     }
     fetchDrops()
@@ -51,7 +53,14 @@ export function AuctionMasterControls() {
     setError(null)
     setConfirmReset(false)
     try {
-      const res = await fetch("/api/admin/reset", { method: "POST" })
+      // If an auction is active/pending, do a targeted rollback to the pre-auction snapshot
+      // Otherwise (admin only), do a full wipe
+      const body = auction ? { auction_id: auction.id } : {}
+      const res = await fetch("/api/admin/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
       const data = await res.json()
       if (!res.ok) {
         setError(data.error ?? "Reset failed.")
@@ -65,29 +74,24 @@ export function AuctionMasterControls() {
 
   const isAdmin = roleIsAdmin(myRole)
 
-  const resetSection = isAdmin ? (
+  // AM can reset auction to pre-start snapshot; admin can also do full wipe (no auction)
+  const resetSection = (
     <div className="space-y-1.5">
-      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Dev / Testing</p>
+      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
+        {auction ? "Reset Auction" : "Dev / Testing"}
+      </p>
       {confirmReset ? (
         <div className="space-y-1.5">
-          <p className="text-xs text-destructive">This will wipe all auctions, rosters, and reset all budgets. Are you sure?</p>
+          <p className="text-xs text-destructive">
+            {auction
+              ? "This will roll back to the pre-auction snapshot — rosters, budgets, and drops will be restored. Are you sure?"
+              : "This will wipe all auctions, rosters, and reset all budgets. Are you sure?"}
+          </p>
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="destructive"
-              className="flex-1"
-              disabled={resetLoading}
-              onClick={handleReset}
-            >
-              Yes, reset everything
+            <Button size="sm" variant="destructive" className="flex-1" disabled={resetLoading} onClick={handleReset}>
+              {auction ? "Yes, roll back" : "Yes, wipe everything"}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex-1"
-              disabled={resetLoading}
-              onClick={() => setConfirmReset(false)}
-            >
+            <Button size="sm" variant="outline" className="flex-1" disabled={resetLoading} onClick={() => setConfirmReset(false)}>
               Cancel
             </Button>
           </div>
@@ -100,16 +104,16 @@ export function AuctionMasterControls() {
           disabled={resetLoading}
           onClick={() => setConfirmReset(true)}
         >
-          Reset to clean slate
+          {auction ? "Reset to pre-auction state" : "Reset to clean slate"}
         </Button>
       )}
     </div>
-  ) : undefined
+  )
 
   // ── No auction yet ────────────────────────────────────────────────────────
   if (!auction) {
     return (
-      <AMCard title="Auction Master" resetSection={resetSection}>
+      <AMCard title="Auction Master" resetSection={isAdmin ? resetSection : undefined}>
         <p className="text-xs text-muted-foreground mb-3">No auction is currently open.</p>
         <div className="flex flex-col gap-2">
           {(["initial", "post_summer", "mini", "post_jan"] as const).map(type => (
@@ -185,24 +189,32 @@ export function AuctionMasterControls() {
           ))}
         </div>
 
-        {/* Staged drops summary for non-initial auctions */}
-        {auction.type !== "initial" && Object.keys(stagedDropCounts).length > 0 && (
+        {/* Staged drops detail for non-initial auctions */}
+        {auction.type !== "initial" && stagedDropTeams.length > 0 && (
           <div className="mb-3">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1.5">Staged drops</p>
-            <div className="space-y-1">
-              {teams.map(team => {
-                const count = stagedDropCounts[team.id] ?? 0
-                if (count === 0) return null
-                return (
-                  <div key={team.id} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-secondary/40">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1.5">
+              Staged drops ({stagedDropTeams.reduce((s, t) => s + t.drops.length, 0)} total)
+            </p>
+            <div className="space-y-2">
+              {stagedDropTeams.map(team => (
+                <div key={team.team_id} className="rounded bg-secondary/40 px-2 py-1.5">
+                  <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: team.color }} />
-                      <span>{team.short_name}</span>
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
+                      <span className="text-xs font-medium">{team.short_name}</span>
                     </div>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1 tabular-nums">{count}</Badge>
+                    <Badge variant="secondary" className="text-[10px] h-4 px-1 tabular-nums">{team.drops.length}</Badge>
                   </div>
-                )
-              })}
+                  <div className="space-y-0.5 pl-3.5">
+                    {team.drops.map(p => (
+                      <div key={p.player_id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="font-mono text-[10px] text-muted-foreground/60 uppercase w-7">{p.position}</span>
+                        <span>{p.web_name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

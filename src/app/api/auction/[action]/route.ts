@@ -129,6 +129,29 @@ async function handleStart(request: NextRequest) {
   const order = (auction.auction_order as string[]) ?? []
   if (order.length === 0) return err("Auction order has not been set. Set the order before starting.")
 
+  // Capture pre-auction snapshot for rollback support
+  const [{ data: teamBudgets }, { data: rosterEntries }, { data: stagedDrops }] = await Promise.all([
+    supabase.from("teams").select("id, budget"),
+    supabase.from("roster_entries").select("id, team_id, player_id, slot_type, bench_order, is_captain, is_vice_captain, base_price"),
+    supabase.from("team_drops").select("id, team_id, player_id, drop_price, status, dropped_post_january, dropped_post_summer, penalty_gameweek").eq("auction_id", auction_id),
+  ])
+
+  // Get base prices for all rostered players
+  const rosteredPlayerIds = (rosterEntries ?? []).map(r => r.player_id)
+  const { data: playerPrices } = rosteredPlayerIds.length > 0
+    ? await supabase.from("players").select("id, base_price").in("id", rosteredPlayerIds)
+    : { data: [] }
+
+  await supabase.from("auction_snapshots").upsert({
+    auction_id,
+    snapshot: {
+      teams: teamBudgets ?? [],
+      roster_entries: rosterEntries ?? [],
+      players: playerPrices ?? [],
+      team_drops: stagedDrops ?? [],
+    },
+  }, { onConflict: "auction_id" })
+
   // For non-initial auctions, lock all staged drops before going active
   if (auction.type !== "initial") {
     await lockAndCommitDrops(auction_id, supabase)

@@ -21,9 +21,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { action } = await params
   try {
     switch (action) {
-      case "quota":         return handleQuota(request)
-      case "staged-counts": return handleStagedCounts(request)
-      default:              return err(`Unknown action: ${action}`, 404)
+      case "quota":          return handleQuota(request)
+      case "staged-counts":  return handleStagedCounts(request)
+      case "staged-detail":  return handleStagedDetail(request)
+      default:               return err(`Unknown action: ${action}`, 404)
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : "Internal server error."
@@ -55,6 +56,40 @@ async function handleStagedCounts(request: NextRequest) {
   }
 
   return NextResponse.json({ counts })
+}
+
+// ─────────────────────────────────────────────
+// STAGED-DETAIL — full player details for staged drops, grouped by team (AM/admin view)
+// Body: { auction_id: string }
+// ─────────────────────────────────────────────
+async function handleStagedDetail(request: NextRequest) {
+  await requireRole("auction_master")
+  const supabase = createClient()
+  const { auction_id } = await request.json()
+  if (!auction_id) return err("auction_id required.")
+
+  const { data: drops } = await supabase
+    .from("team_drops")
+    .select("team_id, player:players(id, web_name, position), team:teams(short_name, color, display_name)")
+    .eq("auction_id", auction_id)
+    .eq("status", "staged")
+
+  // Group by team
+  type DropDetail = { player_id: number; web_name: string; position: string }
+  type TeamGroup = { team_id: string; display_name: string; short_name: string; color: string; drops: DropDetail[] }
+  const grouped: Record<string, TeamGroup> = {}
+
+  for (const d of drops ?? []) {
+    const t = d.team as unknown as { short_name: string; color: string; display_name: string } | null
+    const p = d.player as unknown as { id: number; web_name: string; position: string } | null
+    if (!t || !p) continue
+    if (!grouped[d.team_id]) {
+      grouped[d.team_id] = { team_id: d.team_id, display_name: t.display_name, short_name: t.short_name, color: t.color, drops: [] }
+    }
+    grouped[d.team_id].drops.push({ player_id: p.id, web_name: p.web_name, position: p.position })
+  }
+
+  return NextResponse.json({ teams: Object.values(grouped) })
 }
 
 // ─────────────────────────────────────────────
