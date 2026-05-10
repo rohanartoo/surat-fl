@@ -14,7 +14,7 @@ create policy "Anyone can read chat" on public.chat_messages for select using (t
 create policy "Authenticated users can delete own messages" on public.chat_messages
   for delete using (auth.uid() = user_id);
 
-grant select on public.chat_messages to authenticated, anon;
+grant select, insert on public.chat_messages to authenticated, anon;
 grant delete on public.chat_messages to authenticated;
 
 alter publication supabase_realtime add table public.chat_messages;
