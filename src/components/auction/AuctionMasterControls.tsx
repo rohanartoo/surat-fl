@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { roleIsAM, roleIsAdmin } from "@/lib/role-utils"
+import { roleIsAM } from "@/lib/role-utils"
 import { formatMoney } from "@/lib/utils"
 
 export function AuctionMasterControls() {
@@ -93,24 +93,18 @@ export function AuctionMasterControls() {
     }
   }
 
-  const isAdmin = roleIsAdmin(myRole)
-
-  // AM can reset auction to pre-start snapshot; admin can also do full wipe (no auction)
-  const resetSection = (
+  // Reset section — only shown when an auction exists (targeted snapshot rollback)
+  const resetSection = auction ? (
     <div className="space-y-1.5">
-      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
-        {auction ? "Reset Auction" : "Dev / Testing"}
-      </p>
+      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Reset Auction</p>
       {confirmReset ? (
         <div className="space-y-1.5">
           <p className="text-xs text-destructive">
-            {auction
-              ? "This will roll back to the pre-auction snapshot — rosters, budgets, and drops will be restored. Are you sure?"
-              : "This will wipe all auctions, rosters, and reset all budgets. Are you sure?"}
+            This will roll back to the pre-auction snapshot — rosters, budgets, and drops will be restored. Are you sure?
           </p>
           <div className="flex gap-2">
             <Button size="sm" variant="destructive" className="flex-1" disabled={resetLoading} onClick={handleReset}>
-              {auction ? "Yes, roll back" : "Yes, wipe everything"}
+              Yes, roll back
             </Button>
             <Button size="sm" variant="outline" className="flex-1" disabled={resetLoading} onClick={() => setConfirmReset(false)}>
               Cancel
@@ -125,11 +119,11 @@ export function AuctionMasterControls() {
           disabled={resetLoading}
           onClick={() => setConfirmReset(true)}
         >
-          {auction ? "Reset to pre-auction state" : "Reset to clean slate"}
+          Reset to pre-auction state
         </Button>
       )}
     </div>
-  )
+  ) : undefined
 
   // Cancel section — shown for pending and active auctions
   const cancelSection = auction ? (
@@ -176,7 +170,7 @@ export function AuctionMasterControls() {
   // ── No auction yet ────────────────────────────────────────────────────────
   if (!auction) {
     return (
-      <AMCard title="Auction Master" resetSection={isAdmin ? resetSection : undefined}>
+      <AMCard title="Auction Master">
         <p className="text-xs text-muted-foreground mb-3">No auction is currently open.</p>
         <div className="flex flex-col gap-2">
           {(["initial", "post_summer", "mini", "post_jan"] as const).map(type => (
