@@ -27,6 +27,20 @@ export async function fetchFplBootstrap(): Promise<FplBootstrap> {
   return res.json()
 }
 
+/**
+ * Returns the current gameweek number, or null if no gameweek is currently active.
+ * Uses bootstrap-static events — finds the event where is_current is true.
+ */
+export async function fetchCurrentGameweek(): Promise<number | null> {
+  try {
+    const bootstrap = await fetchFplBootstrap()
+    const current = bootstrap.events.find(e => e.is_current)
+    return current?.id ?? null
+  } catch {
+    return null
+  }
+}
+
 export function mapFplPlayer(player: FplPlayer, teamMap: Record<number, { name: string; short_name: string }>) {
   return {
     id: player.id,

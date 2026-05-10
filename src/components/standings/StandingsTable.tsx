@@ -4,9 +4,10 @@ import type { StandingRow } from "@/lib/scoring"
 interface Props {
   standings: StandingRow[]
   gameweeks: number[]
+  myTeamId?: string
 }
 
-export function StandingsTable({ standings, gameweeks }: Props) {
+export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
   if (standings.length === 0) {
     return (
       <p className="text-sm text-muted-foreground italic text-center py-12">
@@ -33,12 +34,14 @@ export function StandingsTable({ standings, gameweeks }: Props) {
         <tbody className="divide-y divide-border/40">
           {standings.map((row, idx) => {
             const isFirst = idx === 0
+            const isMe = myTeamId ? row.team_id === myTeamId : false
             return (
               <tr
                 key={row.team_id}
                 className={cn(
                   "transition-colors hover:bg-accent/30",
-                  isFirst && "bg-amber-500/5",
+                  isFirst && !isMe && "bg-amber-500/5",
+                  isMe && "bg-emerald-500/10 border-l-2 border-emerald-500",
                 )}
               >
                 <td className="py-3 pr-4 text-muted-foreground font-mono text-xs">
