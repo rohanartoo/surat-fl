@@ -55,6 +55,7 @@ export async function POST(request: NextRequest) {
     player_id: r.player_id,
     gameweek,
     points: simulatePoints(),
+    was_subbed_in: false,
   }))
 
   const { error: upsertErr } = await supabase

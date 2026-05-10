@@ -71,7 +71,13 @@ export async function syncGameweekPoints(
 ): Promise<{ synced: number; teams: number }> {
   const liveStats = await fetchFplLive(gw)
 
-  const { data: teams } = await supabase.from("teams").select("id")
+  const [{ data: teams }, { data: allRoster }] = await Promise.all([
+    supabase.from("teams").select("id"),
+    supabase
+      .from("roster_entries")
+      .select("id, team_id, player_id, slot_type, bench_order, player:players(position)")
+      .in("slot_type", ["starting", "bench"]),
+  ])
   if (!teams || teams.length === 0) return { synced: 0, teams: 0 }
 
   // Delete existing non-penalty rows for this GW so re-sync is safe
@@ -79,12 +85,15 @@ export async function syncGameweekPoints(
     .from("gameweek_points")
     .delete()
     .eq("gameweek", gw)
-    .eq("was_subbed_in", false)
-  await supabase
-    .from("gameweek_points")
-    .delete()
-    .eq("gameweek", gw)
-    .eq("was_subbed_in", true)
+    .not("player_id", "is", null)
+
+  // Group roster entries by team_id in memory (avoids N+1)
+  type RosterRow = { id: string; team_id: string; player_id: number; slot_type: string; bench_order: number | null; player: { position: string } }
+  const rosterByTeam: Record<string, RosterRow[]> = {}
+  for (const row of (allRoster ?? []) as RosterRow[]) {
+    if (!rosterByTeam[row.team_id]) rosterByTeam[row.team_id] = []
+    rosterByTeam[row.team_id].push(row)
+  }
 
   const rows: {
     team_id: string
@@ -95,16 +104,7 @@ export async function syncGameweekPoints(
   }[] = []
 
   for (const team of teams as { id: string }[]) {
-    const { data: roster } = await supabase
-      .from("roster_entries")
-      .select("id, player_id, slot_type, bench_order, player:players(position)")
-      .eq("team_id", team.id)
-      .in("slot_type", ["starting", "bench"])
-
-    const entries: RosterEntry[] = (roster ?? []).map((r: {
-      id: string; player_id: number; slot_type: string
-      bench_order: number | null; player: { position: string }
-    }) => ({
+    const entries: RosterEntry[] = (rosterByTeam[team.id] ?? []).map(r => ({
       id: r.id,
       player_id: r.player_id,
       slot_type: r.slot_type as "starting" | "bench",

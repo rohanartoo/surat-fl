@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { BID_RULES, DROP_RULES, Position } from "@/types"
+import { BID_RULES, DROP_RULES } from "@/types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -27,12 +27,6 @@ export function calcMinIncrement(currentBid: number): number {
  */
 export function calcDropPrice(purchasePrice: number): number {
   return Math.max(1, Math.ceil(purchasePrice * DROP_RULES.drop_price_factor))
-}
-
-/** Convert FPL element_type integer to Position string */
-export function elementTypeToPosition(elementType: number): Position {
-  const map: Record<number, Position> = { 1: "GK", 2: "DEF", 3: "MID", 4: "FWD" }
-  return map[elementType] ?? "GK"
 }
 
 /** CSS color class for a position badge */

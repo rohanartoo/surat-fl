@@ -98,11 +98,18 @@ async function handleSetOrder(request: NextRequest) {
   const { auction_id, order } = await request.json()
 
   if (!auction_id || !Array.isArray(order)) return err("auction_id and order[] required.")
+  if (order.length === 0) return err("Auction order must contain at least one team.")
+  if (!order.every(id => typeof id === "string")) return err("All team IDs must be strings.")
+  if (new Set(order).size !== order.length) return err("Duplicate team IDs in order.")
 
   const { data: auction } = await supabase
     .from("auctions").select("status").eq("id", auction_id).single()
   if (!auction) return err("Auction not found.", 404)
   if (auction.status === "completed") return err("Cannot reorder a completed auction.")
+
+  const { data: validTeams } = await supabase.from("teams").select("id")
+  const validIds = new Set((validTeams ?? []).map((t: { id: string }) => t.id))
+  if (!order.every(id => validIds.has(id))) return err("One or more team IDs are not valid.")
 
   const { error } = await supabase
     .from("auctions")
@@ -154,17 +161,24 @@ async function handleStart(request: NextRequest) {
     },
   }, { onConflict: "auction_id" })
 
-  // For non-initial auctions, lock all staged drops before going active
-  if (auction.type !== "initial") {
-    await lockAndCommitDrops(auction_id, supabase)
+  try {
+    // For non-initial auctions, lock all staged drops before going active
+    if (auction.type !== "initial") {
+      await lockAndCommitDrops(auction_id, supabase)
+    }
+
+    const { error } = await supabase
+      .from("auctions")
+      .update({ status: "active", started_at: new Date().toISOString() })
+      .eq("id", auction_id)
+
+    if (error) throw new Error(error.message)
+  } catch (e) {
+    // Clean up dangling snapshot if activation failed
+    await supabase.from("auction_snapshots").delete().eq("auction_id", auction_id)
+    throw e
   }
 
-  const { error } = await supabase
-    .from("auctions")
-    .update({ status: "active", started_at: new Date().toISOString() })
-    .eq("id", auction_id)
-
-  if (error) return err(error.message)
   return NextResponse.json({ success: true })
 }
 
@@ -792,14 +806,19 @@ async function autoAssign(supabase: any, lot: any, auction: any, teamId: string,
   })
   if (rosterError) return err(rosterError.message)
 
-  await supabase.from("teams").update({ budget: newBudget }).eq("id", teamId)
-  await supabase.from("players").update({ base_price: price }).eq("id", lot.player_id)
-  await supabase.from("auction_lots").update({
-    phase: "concluded",
-    winning_team_id: teamId,
-    winning_bid: price,
-    current_turn_team_id: null,
-  }).eq("id", lot.id)
+  const [{ error: budgetErr }, { error: priceErr }, { error: lotErr }] = await Promise.all([
+    supabase.from("teams").update({ budget: newBudget }).eq("id", teamId),
+    supabase.from("players").update({ base_price: price }).eq("id", lot.player_id),
+    supabase.from("auction_lots").update({
+      phase: "concluded",
+      winning_team_id: teamId,
+      winning_bid: price,
+      current_turn_team_id: null,
+    }).eq("id", lot.id),
+  ])
+  if (budgetErr) return err(`budget update: ${budgetErr.message}`)
+  if (priceErr) return err(`base_price update: ${priceErr.message}`)
+  if (lotErr) return err(`lot close: ${lotErr.message}`)
 
   await supabase.from("auction_log").insert({
     auction_id: lot.auction_id,

@@ -30,19 +30,18 @@ export function AuctionMasterControls() {
       setStagedDropTeams([])
       return
     }
-    const fetchDrops = async () => {
-      const res = await fetch("/api/drops/staged-detail", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auction_id: auction.id }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setStagedDropTeams(data.teams ?? [])
-      }
-    }
-    fetchDrops()
-  }, [auction?.id, auction?.status, auction?.type])
+    const controller = new AbortController()
+    fetch("/api/drops/staged-detail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auction_id: auction.id }),
+      signal: controller.signal,
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data) setStagedDropTeams(data.teams ?? []) })
+      .catch(e => { if (e?.name !== "AbortError") console.error("Failed to fetch staged drops:", e) })
+    return () => controller.abort()
+  }, [auction?.id])
 
   if (!roleIsAM(myRole)) return null
 
