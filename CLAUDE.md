@@ -22,6 +22,10 @@ Tech stack: Next.js 16 (App Router), Supabase (Postgres + Auth + Realtime), Tail
 - Changing a username requires updating both `profiles.username` and `auth.users.email` via the Admin SDK (`supabase.auth.admin.updateUserById`).
 - Role hierarchy: `admin ≥ auction_master ≥ team ≥ guest`. All checks are in `src/lib/roles.ts`.
 
+## Database migrations
+- Every new table must explicitly grant privileges to all three roles: `grant select, insert, update, delete on public.<table> to authenticated, anon, service_role;`
+- RLS policies alone are not sufficient — Postgres-level grants are required separately and must always include `service_role` even though it bypasses RLS.
+
 ## Scheduled endpoints
 - `POST /api/fpl/sync` and `POST /api/scoring/sync` use `Authorization: Bearer SYNC_SECRET` for scheduled cron triggers.
 - Admin session auth is also accepted on these routes for manual triggers.
