@@ -52,7 +52,10 @@ export function FloatingChat({ myUserId, myRole, isAdmin }: FloatingChatProps) {
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
       {/* Chat panel */}
       {open && loaded && (
-        <div className="w-80 h-[480px] shadow-2xl rounded-xl overflow-hidden border border-border">
+        <div
+          className="shadow-2xl rounded-xl overflow-auto border border-border"
+          style={{ width: 288, height: 380, resize: "both", minWidth: 220, minHeight: 280, maxWidth: 480, maxHeight: 640 }}
+        >
           <ChatPanel
             auctionId={auctionId}
             myUserId={myUserId}
@@ -65,7 +68,7 @@ export function FloatingChat({ myUserId, myRole, isAdmin }: FloatingChatProps) {
       )}
 
       {open && !loaded && (
-        <div className="w-80 h-[480px] shadow-2xl rounded-xl border border-border bg-card flex items-center justify-center">
+        <div className="w-72 h-[380px] shadow-2xl rounded-xl border border-border bg-card flex items-center justify-center">
           <p className="text-xs text-muted-foreground">Loading chat…</p>
         </div>
       )}
