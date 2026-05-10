@@ -15,3 +15,5 @@ create policy "Admin full access snapshots" on public.auction_snapshots
 
 create policy "AM read snapshots" on public.auction_snapshots
   for select to authenticated using (get_my_role() in ('admin', 'auction_master'));
+
+grant select, insert, update, delete on public.auction_snapshots to authenticated, anon, service_role;
