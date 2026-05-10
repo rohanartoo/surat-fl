@@ -39,6 +39,12 @@ export async function POST(request: Request) {
       applyDropPenalties(gw, supabase),
     ])
 
+    // Purge chat messages older than 30 days
+    await supabase
+      .from("chat_messages")
+      .delete()
+      .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+
     return NextResponse.json({ ok: true, gameweek: gw, ...pointsResult, ...penaltyResult })
   } catch (err) {
     console.error("[scoring/cron] error:", err)

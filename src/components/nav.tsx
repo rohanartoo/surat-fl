@@ -7,7 +7,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Gavel, Users, Trophy, Settings, LogOut } from "lucide-react"
+import { LayoutDashboard, Gavel, Users, Trophy, Settings, LogOut, MessageCircle } from "lucide-react"
 import type { Role } from "@/types"
 
 const navItems = [
@@ -15,6 +15,7 @@ const navItems = [
   { href: "/auction", label: "Auction", icon: Gavel },
   { href: "/teams", label: "Teams", icon: Users },
   { href: "/standings", label: "Standings", icon: Trophy },
+  { href: "/chat",      label: "Chat",      icon: MessageCircle },
   { href: "/settings",  label: "Settings",  icon: Settings },
 ]
 

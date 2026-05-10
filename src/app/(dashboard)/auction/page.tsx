@@ -8,6 +8,8 @@ import { PlayerSelectionPanel } from "@/components/auction/PlayerSelectionPanel"
 import { AuctionLog } from "@/components/auction/AuctionLog"
 import { BidResultPanel } from "@/components/auction/BidResultPanel"
 import { Badge } from "@/components/ui/badge"
+import { ChatPanel } from "@/components/chat/ChatPanel"
+import type { ChatMessage } from "@/components/chat/ChatPanel"
 import { cn } from "@/lib/utils"
 import type {
   Auction,
@@ -110,6 +112,23 @@ async function getPageData() {
     }
   }
 
+  // Chat: initial messages + kicked names
+  let chatMessages: ChatMessage[] = []
+  let kickedNames: string[] = []
+  if (auction) {
+    const [{ data: chatData }, { data: kickData }] = await Promise.all([
+      supabase
+        .from("chat_messages")
+        .select("id, auction_id, user_id, author_name, is_guest, message, created_at")
+        .eq("auction_id", auction.id)
+        .order("created_at", { ascending: true })
+        .limit(50),
+      supabase.from("chat_kicks").select("guest_name"),
+    ])
+    chatMessages = (chatData ?? []) as ChatMessage[]
+    kickedNames = (kickData ?? []).map((k: { guest_name: string }) => k.guest_name)
+  }
+
   return {
     auction,
     currentLot,
@@ -121,6 +140,10 @@ async function getPageData() {
     filledSlotsByTeam,
     myTeamId: profile?.team_id ?? null,
     myRole: (profile?.role ?? "guest") as Role,
+    myUserId: profile?.id ?? null,
+    isAdmin: profile?.role === "admin",
+    chatMessages,
+    kickedNames,
   }
 }
 
@@ -136,6 +159,10 @@ export default async function AuctionPage() {
     filledSlotsByTeam,
     myTeamId,
     myRole,
+    myUserId,
+    isAdmin,
+    chatMessages,
+    kickedNames,
   } = await getPageData()
 
   const isLive = auction?.status === "active"
@@ -172,8 +199,13 @@ export default async function AuctionPage() {
           </Badge>
         </div>
 
-        {/* Main layout: 3 columns on large screens */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px_280px] gap-6 items-start">
+        {/* Main layout: 3 cols on lg, 4 cols on xl (chat panel added) */}
+        <div className={cn(
+          "grid grid-cols-1 gap-6 items-start",
+          auction
+            ? "lg:grid-cols-[1fr_320px_280px] xl:grid-cols-[1fr_320px_280px_260px]"
+            : "lg:grid-cols-[1fr_320px_280px]"
+        )}>
 
           {/* Left: player pool */}
           <div className="space-y-4">
@@ -198,6 +230,20 @@ export default async function AuctionPage() {
               <TeamBidConsole />
             )}
           </div>
+
+          {/* Chat panel — only when an auction exists */}
+          {auction && (
+            <div className="h-[600px]">
+              <ChatPanel
+                auctionId={auction.id}
+                myUserId={myUserId}
+                myRole={myRole}
+                isAdmin={isAdmin}
+                initialMessages={chatMessages}
+                initialKickedNames={kickedNames}
+              />
+            </div>
+          )}
         </div>
       </div>
     </AuctionProvider>
