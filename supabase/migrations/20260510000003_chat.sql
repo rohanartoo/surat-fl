@@ -14,8 +14,7 @@ create policy "Anyone can read chat" on public.chat_messages for select using (t
 create policy "Authenticated users can delete own messages" on public.chat_messages
   for delete using (auth.uid() = user_id);
 
-grant select, insert on public.chat_messages to authenticated, anon;
-grant delete on public.chat_messages to authenticated;
+grant select, insert, delete on public.chat_messages to authenticated, anon, service_role;
 
 alter publication supabase_realtime add table public.chat_messages;
 
@@ -32,6 +31,6 @@ create table public.chat_kicks (
 alter table public.chat_kicks enable row level security;
 create policy "Anyone can read kicks" on public.chat_kicks for select using (true);
 
-grant select on public.chat_kicks to authenticated, anon;
+grant select, insert, delete on public.chat_kicks to authenticated, anon, service_role;
 
 alter publication supabase_realtime add table public.chat_kicks;
