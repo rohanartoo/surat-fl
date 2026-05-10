@@ -1,342 +1,176 @@
-# Surat Fantasy League — Setup Guide
+# Surat FL — First-Time Setup Guide
 
-## Prerequisites
-
-- Node.js 18+
-- A free [Supabase](https://supabase.com) account
-- A free [Vercel](https://vercel.com) account (for deployment)
+Follow these steps in order. Do not skip ahead.
 
 ---
 
-## Local Development
+## Step 1 — Create a Supabase Project
 
-### 1. Install dependencies
+1. Go to [supabase.com](https://supabase.com) and sign in
+2. Click **New project**
+3. Choose your organisation, give the project a name (e.g. `surat-fl`), pick a region close to you, and set a strong database password
+4. **Save the database password somewhere safe** — you will need it if you ever connect directly to Postgres
+5. Wait for the project to finish provisioning (usually ~1 minute)
 
-```bash
-npm install
+---
+
+## Step 2 — Get Your Project Credentials
+
+1. In the Supabase dashboard, go to **Project Settings → API**
+2. Copy the following values:
+   - **Project URL** (looks like `https://abcdefgh.supabase.co`)
+   - **anon / public** key (long JWT string under "Project API keys")
+   - **service_role** key (below the anon key — keep this secret, never commit it)
+3. Also note your **Project Reference ID** — it's the short alphanumeric string in your dashboard URL: `https://supabase.com/dashboard/project/YOUR-PROJECT-REF`
+
+---
+
+## Step 3 — Create Your `.env.local` File
+
+In the root of the project (same folder as `package.json`), create a file called `.env.local` with the following content, substituting your real values:
+
 ```
-
-### 2. Create a Supabase project
-
-1. Go to [supabase.com](https://supabase.com) and create a new project (free tier)
-2. Once the project is ready, go to **Settings → API**
-3. Copy your **Project URL** and **anon public** key
-
-### 3. Run the database schema
-
-1. In the Supabase dashboard, go to **SQL Editor**
-2. Paste the contents of `supabase/schema.sql` and run it
-3. This creates all tables, RLS policies, and seeds the 7 teams
-
-### 4. Configure environment variables
-
-```bash
-cp .env.local.example .env.local
-```
-
-Edit `.env.local`:
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SYNC_SECRET=any-random-string-you-choose
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SYNC_SECRET=pick-any-random-string-here
 ```
 
-### 5. Create user accounts
+> `SYNC_SECRET` is used to authenticate the scheduled scoring sync. Pick any random string — it just needs to be consistent. Example: `surat-sync-2026`.
 
-Accounts use **username + password** (not email). Behind the scenes Supabase uses `username@surat-fl.internal` as the email — teams only ever see their username.
+---
 
-1. In Supabase dashboard, go to **Authentication → Users**
-2. Create the following accounts:
-   - **1 Admin account** (you) — full edit rights across the entire app
-   - **1 Auction Master account** — read all teams, write on auction page
-   - **7 Team accounts** — one per team (e.g. `team1` / `team7`)
-3. Note down each user's UUID
+## Step 4 — Configure Supabase Auth Settings
 
-> **Guest access**: Guests don't need accounts. The login page has a "Continue as Guest" button that grants read-only, real-time access. Sessions clear when the browser is closed.
+In the Supabase dashboard, go to **Authentication → Settings** and make the following changes:
 
-### 6. Set up user profiles & link to teams
+1. **Disable "Enable email confirmations"** — we use internal `@surat-fl.internal` emails and don't want confirmation emails sent
+2. **Disable "Secure email change"** — username changes must work without email verification
 
-In the Supabase SQL editor, run:
+Click **Save** after each change.
 
-```sql
--- Admin profile
-insert into profiles (id, role, username, display_name)
-values ('admin-uuid', 'admin', 'rohan', 'Rohan');
+---
 
--- Auction Master profile
-insert into profiles (id, role, username, display_name)
-values ('am-uuid', 'auction_master', 'auctionmaster', 'Auction Master');
+## Step 5 — Install the Supabase CLI and Link Your Project
 
--- Team profiles (repeat for each of the 7 teams)
-insert into profiles (id, role, username, display_name, team_id)
-values ('uuid-here', 'team', 'team1', 'Team 1 FC',
-  (select id from teams where short_name = 'T1'));
+In your terminal, run:
+
+```bash
+brew install supabase/tap/supabase
 ```
 
-Update team display names and auction order (based on previous year standings, 1 = 1st place):
+Then log in and link to your project:
 
-```sql
-update teams set display_name = 'Rohan FC', short_name = 'RFC', auction_order = 1
-  where short_name = 'T1';
--- repeat for each team
+```bash
+supabase login
+supabase link --project-ref YOUR-PROJECT-REF
 ```
 
-### 7. Sync FPL player data
+Replace `YOUR-PROJECT-REF` with the reference ID you copied in Step 2.
+
+---
+
+## Step 6 — Run the Migrations
+
+This applies all the SQL files in `supabase/migrations/` to your live database in order:
+
+```bash
+supabase db push
+```
+
+When it completes, go to **Table Editor** in the Supabase dashboard and confirm you can see tables like `profiles`, `teams`, `players`, `auctions`, etc.
+
+---
+
+## Step 7 — Seed the Teams Table
+
+The 7 teams need to exist in the database before you can assign accounts to them.
+
+1. Go to **Table Editor → teams** in the Supabase dashboard
+2. Insert a row for each of the 7 teams with the following columns:
+   - `display_name` — full team name (e.g. `Rohan FC`)
+   - `short_name` — 3–4 letter abbreviation (e.g. `RFC`)
+   - `budget` — `100` (starting budget in £m, do not change)
+   - `color` — a hex colour string used in the standings table (e.g. `#3b82f6`)
+   - `auction_order` — leave as `null` for now; the Auction Master sets this before the first auction
+
+---
+
+## Step 8 — Create Your Admin Account (via Supabase Dashboard)
+
+This is the only step that requires the Supabase dashboard directly. You need one admin account before the in-app Create User form is accessible.
+
+### 8a — Create the auth user
+
+1. Go to **Authentication → Users** in the dashboard
+2. Click **Add user → Create new user**
+3. Set the email to: `yourusername@surat-fl.internal` (e.g. `rohan@surat-fl.internal`)
+4. Set a password
+5. Make sure **"Auto Confirm User"** is ticked
+6. Click **Create user**
+7. Copy the **UUID** shown for the new user — you need it in the next step
+
+### 8b — Set up the profile row
+
+1. Go to **Table Editor → profiles**
+2. Check if a row already exists for your UUID (a database trigger may have created a skeleton row). If it does, click the row to edit it. If not, click **Insert row**.
+3. Set the following columns:
+   - `id` — the UUID from Step 8a
+   - `username` — your username in lowercase with no spaces (e.g. `rohan`)
+   - `display_name` — your display name (e.g. `Rohan`)
+   - `role` — `admin`
+   - `team_id` — leave as `null`
+4. Save the row
+
+---
+
+## Step 9 — Start the App and Log In
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser. Log in with the username and password you set in Step 8.
+
+You should land on the dashboard with full admin access.
+
+---
+
+## Step 10 — Sync FPL Player Data
+
+Before the auction can be run, the players table needs to be populated from the FPL API. Run this from your terminal:
 
 ```bash
 curl -X POST http://localhost:3000/api/fpl/sync \
   -H "Authorization: Bearer your-sync-secret"
 ```
 
-This fetches all ~700 Premier League players from the FPL API and loads them into your database. Re-run this any time you want updated stats.
+Replace `your-sync-secret` with the value you set for `SYNC_SECRET` in `.env.local`.
 
-### 8. Start the dev server
-
-```bash
-npm run dev
-```
-
-Visit [http://localhost:3000](http://localhost:3000)
+You can also trigger this from the dashboard once you are logged in as admin — there is a sync button on the dashboard page.
 
 ---
 
-## Deploying to Vercel
+## Step 11 — Create the 7 Team Accounts
 
-### 1. Push to GitHub
+1. Go to **Settings** in the nav (bottom of the sidebar)
+2. Scroll to the **Create User Account** section at the bottom of the page (admin-only, not visible to other roles)
+3. For each team, fill in:
+   - **Display Name** — their name as shown in the app (e.g. `Rohan Shah`)
+   - **Username** — their login username, lowercase, no spaces (e.g. `rohan`)
+   - **Temporary Password** — something you will share with them privately (min 8 characters)
+   - **Role** — select `Team`
+   - **Assign to Team** — select their team from the dropdown (the teams you created in Step 7)
+4. Click **Create Account**
+5. Share the username and temporary password with each team owner privately (WhatsApp, etc.)
+6. They log in at your app URL, go to **Settings**, and change their password
 
-```bash
-git init
-git add .
-git commit -m "initial commit"
-gh repo create surat-fl --private --push --source=.
-```
-
-### 2. Import to Vercel
-
-1. Go to [vercel.com](https://vercel.com) → **Add New Project**
-2. Import your GitHub repo
-3. Under **Environment Variables**, add the same three variables from your `.env.local`
-4. Click **Deploy**
-
-Vercel gives you a public URL you can share with the other teams immediately.
-
-### 3. Re-run the player sync against production
-
-```bash
-curl -X POST https://your-app.vercel.app/api/fpl/sync \
-  -H "Authorization: Bearer your-sync-secret"
-```
+Repeat for all 7 teams.
 
 ---
 
-## Project Structure
+## Done
 
-```
-src/
-├── app/
-│   ├── (auth)/login/              # Login page (username + guest)
-│   ├── (dashboard)/
-│   │   ├── dashboard/             # League overview
-│   │   ├── team/[id]/             # Individual team roster
-│   │   ├── teams/                 # All teams side-by-side
-│   │   ├── auction/               # Live auction page
-│   │   └── standings/             # League table / leaderboard
-│   ├── api/
-│   │   ├── fpl/sync/              # FPL player sync endpoint
-│   │   ├── auction/[action]/      # Auction action endpoints
-│   │   ├── team/[action]/         # Team management endpoints
-│   │   ├── drops/[action]/        # Drop management endpoints
-│   │   ├── scoring/sync/          # Gameweek points sync
-│   │   └── auth/update-credentials/
-│   ├── layout.tsx
-│   └── page.tsx                   # Redirects to /login or /dashboard
-├── components/
-│   ├── ui/                        # shadcn/ui components
-│   ├── auction/                   # Auction page components
-│   │   ├── AuctionProvider.tsx    # Real-time state context
-│   │   ├── PlayerSelectionPanel.tsx
-│   │   ├── CentralConsole.tsx     # Current player + stats + base price
-│   │   ├── TeamBidConsole.tsx     # Per-team bid card
-│   │   ├── AuctionTimer.tsx       # 45-second countdown
-│   │   ├── AuctionLog.tsx         # Fuzzy-searchable live log
-│   │   ├── AuctionMasterControls.tsx
-│   │   └── BiddingRound.tsx       # Circular bid order display
-│   ├── team/                      # Team page components
-│   │   ├── PlayerCard.tsx         # Draggable player row + actions
-│   │   ├── SquadSection.tsx       # Starting XI (11 slots)
-│   │   ├── BenchSection.tsx       # Bench (4 slots, priority ordered)
-│   │   ├── DroppedSection.tsx     # Drop staging
-│   │   └── TeamBudgetBar.tsx      # Dynamic budget display
-│   ├── standings/
-│   │   └── StandingsTable.tsx     # League table
-│   ├── nav.tsx
-│   ├── providers.tsx
-│   └── theme-toggle.tsx
-├── lib/
-│   ├── supabase/                  # Supabase client (browser + server)
-│   ├── fpl.ts                     # FPL API fetcher
-│   ├── auction-engine.ts          # Core auction logic
-│   ├── drops.ts                   # Drop management logic
-│   ├── scoring.ts                 # FPL points sync + standings
-│   ├── deadline.ts                # FPL gameweek deadline fetcher
-│   ├── roles.ts                   # Role helpers + permissions
-│   └── utils.ts                   # cn(), formatMoney(), helpers
-├── types/index.ts                 # All TypeScript types + rules
-└── proxy.ts                       # Auth middleware (role-aware)
-supabase/
-└── schema.sql                     # Full DB schema — run this in Supabase
-```
+Once all accounts are created and team owners have logged in and set their own passwords, the app is ready to use. The Auction Master can set the auction order and start the initial draft whenever the league is ready.
 
----
-
-## User Roles
-
-**Role hierarchy**: Admin ⊇ Auction Master ⊇ Team ⊇ Guest
-
-| Role | Read Access | Write Access | Notes |
-|---|---|---|---|
-| **Admin** | Everything | Everything | Superset of AM — can perform all AM actions without a separate account |
-| **Auction Master** | Everything | Auction page (select player, timer, conclude bids, 10-move undo, confirm drops) | Cannot perform admin-only actions |
-| **Team** | Everything | Own team only (bids, roster, bench, drops) | |
-| **Guest** | Everything | None | Session cleared on browser close; unlimited concurrent guests |
-
----
-
-## What's built (Phase 0 — skeleton)
-
-- [x] Team login with Supabase Auth
-- [x] League overview dashboard (budgets, player counts)
-- [x] Individual team roster pages (by position, empty slots, budget breakdown)
-- [x] All-teams view
-- [x] Auction page skeleton (player browser, team budgets panel)
-- [x] FPL player sync (positions, % selected, club, status)
-- [x] Dark / light mode
-- [x] Auth middleware (redirect to login if unauthenticated)
-- [x] Full database schema with RLS
-
-## Rollout Phases
-
-### Phase 1 — Foundation
-- [ ] Username + password login (not email)
-- [ ] Role-based auth: Admin, Auction Master, Team, Guest
-- [ ] Guest "Continue as Guest" button (session clears on browser close)
-- [ ] Profiles table with `username`, `display_name`, `role`, `team_id`
-- [ ] Teams can change their password after first login
-- [ ] Dashboard with £100m budgets per team
-
-### Phase 2 — Team Pages
-- [ ] Roster pages with placeholder slots before draft
-- [ ] Base price displayed (not FPL cost)
-- [ ] Compact position counts on all-teams view (GK 0/2, DEF 0/5, etc.)
-
-### Phase 3 — Auction MVP
-- [ ] Positional bidding: GK → DEF → MID → FWD (won't advance until all teams fill current position)
-- [ ] Player selection panel locked to current position category
-- [ ] 45-second interest timer
-- [ ] Team bid consoles: budget, position counts, interest + bid input
-- [ ] Bid validation: integer, ≥ base price, +£1m increment (or +£2m above £20m), max bid = budget - (slots-1)
-- [ ] Position eligibility: disabled when position is full
-- [ ] AM concludes bids, assigns players
-- [ ] Real-time updates via Supabase Realtime
-- [ ] Live auction log (fuzzy searchable)
-
-### Phase 4 — Full Auction
-- [ ] Enforced circular bid order with auto-rotation after each player
-- [ ] Teams auto-skipped when their position is full
-- [ ] 10-move undo (player assignments, timer resets, bid corrections)
-- [ ] Undoing assignment returns player to pool + refunds budget
-- [ ] End Draft button (blocked until all 7 teams have 15 players)
-- [ ] AM sets initial auction order (based on previous year standings)
-
-### Phase 5 — Team Management
-- [ ] Starting XI (11) / Bench (4, priority-ordered) / Dropped sections
-- [ ] Drag and drop between Starting XI and Bench
-- [ ] Captain / Vice Captain selection
-- [ ] Drop staging (returnable before auction starts)
-- [ ] Dynamic budget when players move to dropped section
-- [ ] Formation minimums enforced (1 GK, 3 DEF, 3 MID, 1 FWD)
-- [ ] Auto-lock at FPL gameweek deadlines (via FPL API)
-
-### Phase 6 — Drops & Mini-Auctions
-- [ ] Teams mark players for drop → player **stays in squad**, budget unchanged
-- [ ] Teams can **remove a player from the drop list** at any time before the auction starts
-- [ ] AM clicks **"Start Auction"** → all drops across all teams are simultaneously locked and added to the player pool
-- [ ] Drop quotas: 3 free (first in-season + post-Jan), 2 free (all other mini-auctions); max 1 rollover
-- [ ] **-4 pt penalty** per excess drop, deducted at **end of the gameweek**
-- [ ] Dropped player base price = ceil(purchase_price × 0.5)
-- [ ] Mini-auction pool: confirmed drops + undrafted players
-- [ ] Same-window re-sign restriction enforced at lock time
-- [ ] Post-Jan rule: team can't re-sign player they dropped after January (ever)
-- [ ] Pre-Jan rule: team can only re-draft a dropped player after first Jan auction starts
-
-### Phase 7 — Scoring & Leaderboard
-- [ ] Sync real FPL points per gameweek per player
-- [ ] Calculate team GW points from starting XI of 11
-- [ ] Apply -4 pt drop penalties to standings
-- [ ] Leaderboard / standings page (rank, GW pts, total pts, penalty pts)
-- [ ] Live standings drive auction bid order for subsequent auctions
-
----
-
-## Key Rules
-
-```ts
-export const SQUAD_RULES = {
-  total: 15,
-  starting: 11,
-  bench: 4,
-  slots: { GK: 2, DEF: 5, MID: 5, FWD: 3 } as Record<Position, number>,
-  min_starting: { GK: 1, DEF: 3, MID: 3, FWD: 1 } as Record<Position, number>,
-  min_bid: 1,
-}
-
-export const BID_RULES = {
-  increment_threshold: 20,  // £20m
-  increment_below: 1,       // +£1m when current bid < £20m
-  increment_above: 2,       // +£2m when current bid ≥ £20m
-}
-
-export const DROP_RULES = {
-  free_drops_first_inseason: 3,
-  free_drops_post_jan: 3,
-  free_drops_standard: 2,
-  max_carry_over: 1,
-  penalty_per_extra_drop: -4,  // deducted end of gameweek
-  drop_price_factor: 0.5,      // ceil(purchase_price × 0.5)
-}
-```
-
-### Budget & Bid Validation
-- Max bid: `budget - (empty_slots - 1)`
-- Increment: **+£1m** when current bid < £20m; **+£2m** when ≥ £20m
-- All bids must be **integers** ≥ player's base price
-- Base price after draft = winning bid amount
-- Base price after drop = `ceil(last_draft_price × 0.5)`
-
-### Auction Phases Per Player
-1. **Interest Phase** — 45s timer; teams indicate interest or pass
-2. **Bidding Phase** — interested teams bid in circular order; must raise or fold; fold = eliminated for this player
-3. **Conclusion** — AM confirms winner; player assigned, budget deducted, `base_price` updated
-
-### Player Stats Shown in Auction Console
-Position · Club · Injury/status · Total FPL points · Goals · Assists · Clean sheets · Bonus points · Yellow/Red cards · Minutes played · Defensive contribution points
-
-*(No % selected or FPL price — these are irrelevant to our auction)*
-
-### Auto-Sub Scoring Rules
-When a starting XI player did not play in a gameweek:
-1. Check bench players in priority order (bench slot 1 → 4)
-2. Sub in the first bench player whose position keeps the formation valid
-3. Continue until all non-playing starters are filled or bench is exhausted
-
-### Re-Draft Restrictions (cumulative)
-1. **Same-window**: a team can never re-sign a player dropped in the **same auction window**
-2. **Pre-Jan**: a player dropped before January can only be re-drafted after the **first January auction has started**
-3. **Post-Jan**: a player dropped after January opens **can never** be re-signed by the same team
-
-### Drop Lifecycle
-1. Team marks a player for drop → player **stays in their squad** and budget reflects their presence
-2. Team can **remove the player from drop list at any time** before the auction starts
-3. AM clicks **"Start Auction"** → all drops across all teams are **simultaneously locked** and committed to the player pool
-4. Re-draft restrictions evaluated at lock time; -4 pt penalty per excess drop deducted at end of GW
+You can delete this file once setup is complete.

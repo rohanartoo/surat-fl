@@ -5,16 +5,39 @@ import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Gavel, Users, LogOut } from "lucide-react"
+import { LayoutDashboard, Gavel, Users, Trophy, Settings, LogOut } from "lucide-react"
+import type { Role } from "@/types"
 
 const navItems = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/auction", label: "Auction", icon: Gavel },
   { href: "/teams", label: "Teams", icon: Users },
+  { href: "/standings", label: "Standings", icon: Trophy },
+  { href: "/settings",  label: "Settings",  icon: Settings },
 ]
 
-export function Nav() {
+const roleBadgeStyle: Record<Role, string> = {
+  admin:          "bg-rose-500/15 text-rose-500 border-rose-500/30",
+  auction_master: "bg-amber-500/15 text-amber-500 border-amber-500/30",
+  team:           "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",
+  guest:          "bg-secondary text-muted-foreground border-border",
+}
+
+const roleLabel: Record<Role, string> = {
+  admin:          "Admin",
+  auction_master: "AM",
+  team:           "Team",
+  guest:          "Guest",
+}
+
+interface NavProps {
+  displayName: string | null
+  role: Role
+}
+
+export function Nav({ displayName, role }: NavProps) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -56,8 +79,19 @@ export function Nav() {
             ))}
           </nav>
 
-          {/* Right actions */}
-          <div className="flex items-center gap-1">
+          {/* Right: identity + actions */}
+          <div className="flex items-center gap-2">
+            {displayName && (
+              <div className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={cn("text-[10px] h-5 px-1.5 font-medium", roleBadgeStyle[role])}
+                >
+                  {roleLabel[role]}
+                </Badge>
+                <span className="text-sm font-medium text-foreground">{displayName}</span>
+              </div>
+            )}
             <ThemeToggle />
             <Button
               variant="ghost"

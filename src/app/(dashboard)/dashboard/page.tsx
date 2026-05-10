@@ -24,7 +24,7 @@ async function getLeagueOverview() {
 
 function TeamCard({ team, playerCount }: { team: LeagueTeam; playerCount: number }) {
   const slotsLeft = 15 - playerCount
-  const budgetPct = (team.budget / 100) * 100
+  const budgetPct = team.budget
 
   return (
     <Link href={`/team/${team.id}`}>
@@ -33,7 +33,7 @@ function TeamCard({ team, playerCount }: { team: LeagueTeam; playerCount: number
           <div className="flex items-start justify-between">
             <div>
               <CardTitle className="text-base font-semibold group-hover:text-emerald-500 transition-colors">
-                {team.name}
+                {team.display_name}
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-0.5">{team.short_name}</p>
             </div>
