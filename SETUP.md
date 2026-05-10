@@ -17,7 +17,7 @@ Follow these steps in order. Do not skip ahead.
 ## Step 2 — Get Your Project Credentials
 
 1. In the Supabase dashboard, go to **Project Settings → API**
-2. Copy the following values:
+2. Copy the following values — you will need them in Steps 4 and 6:
    - **Project URL** (looks like `https://abcdefgh.supabase.co`)
    - **anon / public** key (long JWT string under "Project API keys")
    - **service_role** key (below the anon key — keep this secret, never commit it)
@@ -25,33 +25,21 @@ Follow these steps in order. Do not skip ahead.
 
 ---
 
-## Step 3 — Create Your `.env.local` File
-
-In the root of the project (same folder as `package.json`), create a file called `.env.local` with the following content, substituting your real values:
-
-```
-NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SYNC_SECRET=pick-any-random-string-here
-```
-
-> `SYNC_SECRET` is used to authenticate the scheduled scoring sync. Pick any random string — it just needs to be consistent. Example: `surat-sync-2026`.
-
----
-
-## Step 4 — Configure Supabase Auth Settings
+## Step 3 — Configure Supabase Auth Settings
 
 In the Supabase dashboard, go to **Authentication → Settings** and make the following changes:
 
 1. **Disable "Enable email confirmations"** — we use internal `@surat-fl.internal` emails and don't want confirmation emails sent
 2. **Disable "Secure email change"** — username changes must work without email verification
+3. **Enable "Data API"** — required for supabase-js to work
+4. **Disable "Automatically expose new tables"** — RLS policies are managed explicitly in migrations
+5. **Disable "Automatic RLS"** — RLS policies are already defined in the migrations
 
-Click **Save** after each change.
+Click **Save** after each section.
 
 ---
 
-## Step 5 — Install the Supabase CLI and Link Your Project
+## Step 4 — Install the Supabase CLI and Link Your Project
 
 In your terminal, run:
 
@@ -66,19 +54,40 @@ supabase login
 supabase link --project-ref YOUR-PROJECT-REF
 ```
 
-Replace `YOUR-PROJECT-REF` with the reference ID you copied in Step 2.
+Replace `YOUR-PROJECT-REF` with the reference ID from Step 2.
 
 ---
 
-## Step 6 — Run the Migrations
+## Step 5 — Run the Migrations
 
-This applies all the SQL files in `supabase/migrations/` to your live database in order:
+This applies all the SQL files in `supabase/migrations/` to your live Supabase database in order:
 
 ```bash
 supabase db push
 ```
 
 When it completes, go to **Table Editor** in the Supabase dashboard and confirm you can see tables like `profiles`, `teams`, `players`, `auctions`, etc.
+
+---
+
+## Step 6 — Deploy to Vercel
+
+Production credentials are set directly in Vercel — they never need to live in any local file.
+
+1. Go to [vercel.com](https://vercel.com) and sign in
+2. Click **Add New Project** and import your GitHub repo (`surat-fl`)
+3. Before clicking Deploy, go to **Environment Variables** and add the following:
+
+| Name | Value |
+|------|-------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Your Project URL from Step 2 |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Your anon/public key from Step 2 |
+| `SUPABASE_SERVICE_ROLE_KEY` | Your service_role key from Step 2 |
+| `SYNC_SECRET` | Any random string (e.g. `surat-sync-2026`) — used to authenticate the scoring sync cron job |
+
+4. Click **Deploy**
+
+Vercel will give you a public URL (e.g. `https://surat-fl.vercel.app`). This is the URL you share with the other teams.
 
 ---
 
@@ -124,37 +133,27 @@ This is the only step that requires the Supabase dashboard directly. You need on
 
 ---
 
-## Step 9 — Start the App and Log In
+## Step 9 — Log In and Sync FPL Player Data
+
+1. Go to your Vercel URL and log in with the username and password from Step 8
+2. You should land on the dashboard with full admin access
+3. Trigger the FPL player sync so the players table is populated before the auction. Run this from your terminal:
 
 ```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser. Log in with the username and password you set in Step 8.
-
-You should land on the dashboard with full admin access.
-
----
-
-## Step 10 — Sync FPL Player Data
-
-Before the auction can be run, the players table needs to be populated from the FPL API. Run this from your terminal:
-
-```bash
-curl -X POST http://localhost:3000/api/fpl/sync \
+curl -X POST https://your-vercel-url.vercel.app/api/fpl/sync \
   -H "Authorization: Bearer your-sync-secret"
 ```
 
-Replace `your-sync-secret` with the value you set for `SYNC_SECRET` in `.env.local`.
+Replace `your-sync-secret` with the value you set for `SYNC_SECRET` in Step 6.
 
-You can also trigger this from the dashboard once you are logged in as admin — there is a sync button on the dashboard page.
+This fetches all ~700 Premier League players from the FPL API. Re-run it any time you want updated player stats.
 
 ---
 
-## Step 11 — Create the 7 Team Accounts
+## Step 10 — Create the 7 Team Accounts
 
 1. Go to **Settings** in the nav (bottom of the sidebar)
-2. Scroll to the **Create User Account** section at the bottom of the page (admin-only, not visible to other roles)
+2. Scroll to the **Create User Account** section at the bottom (admin-only)
 3. For each team, fill in:
    - **Display Name** — their name as shown in the app (e.g. `Rohan Shah`)
    - **Username** — their login username, lowercase, no spaces (e.g. `rohan`)
@@ -162,8 +161,8 @@ You can also trigger this from the dashboard once you are logged in as admin —
    - **Role** — select `Team`
    - **Assign to Team** — select their team from the dropdown (the teams you created in Step 7)
 4. Click **Create Account**
-5. Share the username and temporary password with each team owner privately (WhatsApp, etc.)
-6. They log in at your app URL, go to **Settings**, and change their password
+5. Share the Vercel URL, username, and temporary password with each team owner privately
+6. They log in, go to **Settings**, and change their password
 
 Repeat for all 7 teams.
 
@@ -171,6 +170,6 @@ Repeat for all 7 teams.
 
 ## Done
 
-Once all accounts are created and team owners have logged in and set their own passwords, the app is ready to use. The Auction Master can set the auction order and start the initial draft whenever the league is ready.
+Once all accounts are created and team owners have logged in and set their own passwords, the app is ready. The Auction Master can set the auction order and start the initial draft whenever the league is ready.
 
 You can delete this file once setup is complete.
