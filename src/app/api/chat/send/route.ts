@@ -30,8 +30,8 @@ export async function POST(request: NextRequest) {
 
   const profile = await getProfile()
 
-  // ── Authenticated user ──────────────────────────────────────────────────────
-  if (profile) {
+  // ── Authenticated non-guest user ────────────────────────────────────────────
+  if (profile && profile.role !== "guest") {
     let authorName = profile.display_name ?? profile.username ?? "Unknown"
 
     // Team role: use their team's short_name
