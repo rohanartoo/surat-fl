@@ -9,10 +9,12 @@ import type { LeagueTeam, RosterEntry } from "@/types"
 async function getLeagueOverview() {
   const supabase = await createClient()
 
-  const { data: teams } = await supabase
+  const { data: teams, error: teamsError } = await supabase
     .from("teams")
     .select("*")
     .order("budget", { ascending: false })
+
+  if (teamsError) console.error("[dashboard] teams error:", teamsError)
 
   const { data: rosters } = await supabase
     .from("roster_entries")
@@ -84,7 +86,7 @@ export default async function DashboardPage() {
       {/* Page header */}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">League Overview</h1>
-        <p className="text-sm text-muted-foreground mt-1">2024/25 season</p>
+        <p className="text-sm text-muted-foreground mt-1">2025/26 season</p>
       </div>
 
       {/* Summary stats */}
