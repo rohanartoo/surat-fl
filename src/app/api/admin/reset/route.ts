@@ -41,8 +41,8 @@ async function handleTargetedReset(auction_id: string) {
   const supabase = createClient()
 
   const result = await restoreFromSnapshot(auction_id, supabase)
-  if ("error" in result) {
-    return NextResponse.json({ error: result.error }, { status: 404 })
+  if (!result.restored) {
+    return NextResponse.json({ error: "No snapshot found for this auction. Cannot roll back." }, { status: 404 })
   }
 
   // Delete the auction (cascades to lots, bids, log, transfer records, snapshot)

@@ -866,14 +866,14 @@ async function autoAssign(supabase: any, lot: any, auction: any, teamId: string,
 // ─────────────────────────────────────────────
 // SHARED HELPER — restore league state from pre-auction snapshot
 // ─────────────────────────────────────────────
-export async function restoreFromSnapshot(auction_id: string, supabase: ReturnType<typeof createClient>): Promise<{ restored: true } | { error: string }> {
+export async function restoreFromSnapshot(auction_id: string, supabase: ReturnType<typeof createClient>): Promise<{ restored: boolean }> {
   const { data: snapshotRow } = await supabase
     .from("auction_snapshots")
     .select("snapshot")
     .eq("auction_id", auction_id)
     .single()
 
-  if (!snapshotRow) return { error: "No snapshot found for this auction." }
+  if (!snapshotRow) return { restored: false as const }
 
   const snap = snapshotRow.snapshot as {
     teams: { id: string; budget: number }[]
@@ -915,7 +915,7 @@ export async function restoreFromSnapshot(auction_id: string, supabase: ReturnTy
     await supabase.from("team_drops").insert(dropsToRestore)
   }
 
-  return { restored: true }
+  return { restored: true as const }
 }
 
 // ─────────────────────────────────────────────
@@ -933,10 +933,9 @@ async function handleCancel(request: NextRequest) {
   if (!auction) return err("Auction not found.", 404)
   if (!["pending", "active"].includes(auction.status)) return err("Only pending or active auctions can be cancelled.")
 
-  // If active, restore from snapshot first
+  // If active, attempt snapshot restore (best-effort — skip if no snapshot exists)
   if (auction.status === "active") {
-    const result = await restoreFromSnapshot(auction_id, supabase)
-    if ("error" in result) return err(result.error, 404)
+    await restoreFromSnapshot(auction_id, supabase)
   }
 
   // Delete the auction (cascades to lots, bids, log, transfer records, snapshot)

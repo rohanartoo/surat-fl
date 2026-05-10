@@ -89,8 +89,7 @@ export function AuctionMasterControls() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Cancel failed."); return }
-      await refresh()
-      router.refresh()
+      router.push("/auction")
     } finally {
       setCancelLoading(false)
     }
@@ -442,9 +441,7 @@ export function AuctionMasterControls() {
         Phase: <span className="font-medium capitalize">{phase}</span>
       </p>
 
-      {(resetSection || cancelSection) && <Separator className="my-3" />}
-      {resetSection && <div className="mb-3">{resetSection}</div>}
-      {cancelSection}
+      {cancelSection && <><Separator className="my-3" />{cancelSection}</>}
     </AMCard>
   )
 }
