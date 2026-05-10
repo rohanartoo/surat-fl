@@ -237,3 +237,95 @@ export async function getStandings(supabase: SupabaseClient): Promise<StandingRo
 
   return Object.values(standings).sort((a, b) => b.total_points - a.total_points)
 }
+
+// =============================================
+// GAMEWEEK HIGHLIGHTS
+// =============================================
+
+export interface GameweekHighlights {
+  gameweek: number
+  playerOfTheWeek: {
+    player_name: string
+    web_name: string
+    team_name: string
+    points: number
+    was_subbed_in: boolean
+  } | null
+  topTeam: {
+    team_id: string
+    display_name: string
+    short_name: string
+    color: string
+    points: number
+  } | null
+}
+
+/**
+ * Returns the most recent gameweek that has synced data in gameweek_points,
+ * or null if no data exists yet.
+ */
+export async function getLastSyncedGameweek(supabase: SupabaseClient): Promise<number | null> {
+  const { data } = await supabase
+    .from("gameweek_points")
+    .select("gameweek")
+    .order("gameweek", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data?.gameweek ?? null
+}
+
+/**
+ * Returns player of the week (highest individual points scorer from drafted players)
+ * and top team (highest team total) for the given gameweek.
+ */
+export async function getGameweekHighlights(
+  gw: number,
+  supabase: SupabaseClient,
+): Promise<GameweekHighlights> {
+  const [{ data: pointRows }, { data: teams }] = await Promise.all([
+    supabase
+      .from("gameweek_points")
+      .select("team_id, player_id, points, was_subbed_in, player:players(web_name, first_name, second_name, fpl_team_short)")
+      .eq("gameweek", gw)
+      .not("player_id", "is", null),
+    supabase.from("teams").select("id, display_name, short_name, color"),
+  ])
+
+  // Player of the week — highest individual points
+  let playerOfTheWeek: GameweekHighlights["playerOfTheWeek"] = null
+  if (pointRows && pointRows.length > 0) {
+    const best = [...pointRows].sort((a, b) => b.points - a.points)[0]
+    if (best?.player) {
+      const p = best.player as { web_name: string; first_name: string; second_name: string; fpl_team_short: string }
+      playerOfTheWeek = {
+        player_name: `${p.first_name} ${p.second_name}`,
+        web_name: p.web_name,
+        team_name: p.fpl_team_short,
+        points: best.points,
+        was_subbed_in: best.was_subbed_in,
+      }
+    }
+  }
+
+  // Top team — highest sum of points for the GW
+  let topTeam: GameweekHighlights["topTeam"] = null
+  if (pointRows && teams) {
+    const teamMap = Object.fromEntries((teams as { id: string; display_name: string; short_name: string; color: string }[]).map(t => [t.id, t]))
+    const totals: Record<string, number> = {}
+    for (const row of pointRows) {
+      totals[row.team_id] = (totals[row.team_id] ?? 0) + row.points
+    }
+    const topTeamId = Object.entries(totals).sort((a, b) => b[1] - a[1])[0]?.[0]
+    if (topTeamId && teamMap[topTeamId]) {
+      topTeam = {
+        team_id: topTeamId,
+        display_name: teamMap[topTeamId].display_name,
+        short_name: teamMap[topTeamId].short_name,
+        color: teamMap[topTeamId].color,
+        points: totals[topTeamId],
+      }
+    }
+  }
+
+  return { gameweek: gw, playerOfTheWeek, topTeam }
+}
