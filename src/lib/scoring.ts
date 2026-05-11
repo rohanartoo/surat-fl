@@ -202,12 +202,11 @@ export interface StandingRow {
   color: string
   total_points: number
   by_gameweek: Record<number, number>
+  latest_gw: number | null
+  latest_gw_points: number | null
+  position_change: number
 }
 
-/**
- * Returns all teams sorted by total points descending, including per-gameweek
- * breakdowns. Teams with no points recorded are included with 0.
- */
 export async function getStandings(supabase: SupabaseClient): Promise<StandingRow[]> {
   const [{ data: teams }, { data: pointRows }] = await Promise.all([
     supabase.from("teams").select("id, display_name, short_name, color"),
@@ -216,7 +215,6 @@ export async function getStandings(supabase: SupabaseClient): Promise<StandingRo
 
   const standings: Record<string, StandingRow> = {}
 
-  // Seed every team with 0 points so they always appear
   for (const team of teams ?? []) {
     standings[team.id] = {
       team_id: team.id,
@@ -225,6 +223,9 @@ export async function getStandings(supabase: SupabaseClient): Promise<StandingRo
       color: team.color,
       total_points: 0,
       by_gameweek: {},
+      latest_gw: null,
+      latest_gw_points: null,
+      position_change: 0,
     }
   }
 
@@ -235,7 +236,27 @@ export async function getStandings(supabase: SupabaseClient): Promise<StandingRo
       (standings[row.team_id].by_gameweek[row.gameweek] ?? 0) + row.points
   }
 
-  return Object.values(standings).sort((a, b) => b.total_points - a.total_points)
+  const allGws = Object.values(standings).flatMap(r => Object.keys(r.by_gameweek).map(Number))
+  const latestGw = allGws.length > 0 ? Math.max(...allGws) : null
+
+  const current = Object.values(standings).sort((a, b) => b.total_points - a.total_points)
+
+  if (latestGw !== null) {
+    // Rank before this GW's points were added
+    const prev = [...current].sort(
+      (a, b) => (b.total_points - (b.by_gameweek[latestGw] ?? 0)) - (a.total_points - (a.by_gameweek[latestGw] ?? 0))
+    )
+    const prevRankById: Record<string, number> = {}
+    prev.forEach((r, i) => { prevRankById[r.team_id] = i })
+
+    current.forEach((r, currIdx) => {
+      r.latest_gw = latestGw
+      r.latest_gw_points = r.by_gameweek[latestGw] ?? null
+      r.position_change = prevRankById[r.team_id] - currIdx
+    })
+  }
+
+  return current
 }
 
 // =============================================

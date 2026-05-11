@@ -67,7 +67,7 @@ export default async function StandingsPage() {
           <CardTitle className="text-base">League Table</CardTitle>
         </CardHeader>
         <CardContent>
-          <StandingsTable standings={standings} gameweeks={gameweeks} />
+          <StandingsTable standings={standings} gameweeks={gameweeks} myTeamId={profile?.team_id ?? undefined} />
         </CardContent>
       </Card>
     </div>
