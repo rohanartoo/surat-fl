@@ -35,14 +35,14 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border/60">
-            <th className="text-left font-medium text-muted-foreground pb-3 pr-4 w-10">#</th>
+            <th className="text-left font-medium text-muted-foreground pb-3 pl-2 pr-4 w-10">#</th>
             <th className="text-left font-medium text-muted-foreground pb-3 pr-4">Team</th>
             {latestGw !== null && (
               <th className="text-center font-semibold text-foreground pb-3 px-3 w-16 tabular-nums">
                 GW{latestGw}
               </th>
             )}
-            <th className="text-right font-medium text-foreground pb-3 px-4 w-16">Total</th>
+            <th className="text-right font-medium text-foreground pb-3 pl-4 pr-6 w-16">Total</th>
             {historyGws.map(gw => (
               <th key={gw} className="text-center font-medium text-muted-foreground pb-3 px-3 w-12 tabular-nums">
                 GW{gw}
@@ -64,7 +64,7 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
                 )}
               >
                 {/* Rank + movement */}
-                <td className="py-3 pr-4">
+                <td className="py-3 pl-2 pr-4">
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground font-mono text-xs w-3 text-right">
                       {isFirst ? "🥇" : idx + 1}
@@ -93,7 +93,7 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
 
                 {/* Total */}
                 <td className={cn(
-                  "py-3 px-4 text-right font-mono font-semibold tabular-nums",
+                  "py-3 pl-4 pr-6 text-right font-mono font-semibold tabular-nums",
                   isFirst ? "text-amber-500" : "text-foreground",
                 )}>
                   {row.total_points}
