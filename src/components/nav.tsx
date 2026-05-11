@@ -69,11 +69,11 @@ export function Nav({ displayName, role }: NavProps) {
                   variant="ghost"
                   size="sm"
                   className={cn(
-                    "gap-1.5 text-muted-foreground hover:text-foreground",
-                    pathname === href && "text-foreground bg-accent"
+                    "gap-1.5 text-muted-foreground hover:text-foreground relative",
+                    pathname === href && "text-foreground font-medium after:absolute after:bottom-0 after:left-2 after:right-2 after:h-[2px] after:bg-foreground after:rounded-t-sm"
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
                   {label}
                 </Button>
               </Link>
@@ -101,7 +101,7 @@ export function Nav({ displayName, role }: NavProps) {
               aria-label="Sign out"
               className="text-muted-foreground hover:text-foreground"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-4 w-4" strokeWidth={1.5} />
             </Button>
           </div>
         </div>

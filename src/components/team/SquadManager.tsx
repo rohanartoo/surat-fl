@@ -270,14 +270,14 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
 
 function EmptySlot({ label, index }: { label: string; index?: number }) {
   return (
-    <div className="flex items-center gap-3 py-2.5 px-2 opacity-40">
+    <div className="flex items-center gap-3 py-2.5 px-2 opacity-30">
       {index !== undefined && (
-        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-bold text-muted-foreground border border-dashed border-border">
+        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted/10 text-[10px] font-bold text-muted-foreground border border-border/30">
           {index}
         </div>
       )}
-      <div className="w-10 h-6 rounded border border-dashed border-border" />
-      <p className="text-xs text-muted-foreground italic">{label}</p>
+      <div className="w-10 h-6 rounded border border-border/30 bg-muted/10" />
+      <p className="text-xs text-muted-foreground/70 italic">{label}</p>
     </div>
   )
 }

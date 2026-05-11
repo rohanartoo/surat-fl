@@ -41,8 +41,8 @@ export function CentralConsole() {
   return (
     <Card className={cn(
       "border",
-      phase === "bidding"  && "border-emerald-500/40 bg-emerald-500/5",
-      phase === "interest" && "border-amber-500/40 bg-amber-500/5",
+      phase === "bidding"  && "border-emerald-500/30 bg-emerald-500/3 shadow-[0_0_30px_rgba(16,185,129,0.05)]",
+      phase === "interest" && "border-amber-500/30 bg-amber-500/3",
       phase === "concluded" && "border-border/60 opacity-60",
       phase === "pending"  && "border-border/60",
     )}>
@@ -60,7 +60,7 @@ export function CentralConsole() {
                 </Badge>
               )}
             </div>
-            <CardTitle className="text-xl leading-tight">{player.web_name}</CardTitle>
+            <CardTitle className="text-2xl font-bold tracking-tight leading-tight">{player.web_name}</CardTitle>
             <p className="text-sm text-muted-foreground mt-0.5">{player.fpl_team}</p>
             {player.news && (
               <p className="text-xs text-amber-500 mt-1 leading-snug">{player.news}</p>
@@ -71,24 +71,24 @@ export function CentralConsole() {
           <div className="text-right shrink-0">
             {current_bid !== null ? (
               <>
-                <p className="text-2xl font-semibold font-mono text-emerald-500">
+                <p className="text-2xl font-semibold font-mono tracking-tight text-emerald-500">
                   {formatMoney(current_bid)}
                 </p>
                 <p className="text-xs text-muted-foreground">current bid</p>
                 {phase === "bidding" && (
-                  <p className="text-xs font-mono text-amber-500 mt-1">
+                  <p className="text-[10px] text-muted-foreground mt-1">
                     min next: {formatMoney(minNextBid)}
                   </p>
                 )}
               </>
             ) : (
               <>
-                <p className="text-2xl font-semibold font-mono text-muted-foreground">
+                <p className="text-2xl font-semibold font-mono tracking-tight text-muted-foreground">
                   {formatMoney(player.base_price)}
                 </p>
                 <p className="text-xs text-muted-foreground">base price</p>
                 {phase === "bidding" && (
-                  <p className="text-xs font-mono text-amber-500 mt-1">
+                  <p className="text-[10px] text-muted-foreground mt-1">
                     min bid: {formatMoney(minNextBid)}
                   </p>
                 )}
@@ -98,7 +98,7 @@ export function CentralConsole() {
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
         {/* Timer (shown only during interest phase) */}
         <AuctionTimer
           timerStartedAt={timer_started_at}
@@ -109,25 +109,34 @@ export function CentralConsole() {
         <div className="grid grid-cols-4 gap-2">
           {stats.map(({ label, value }) => (
             <div key={label} className="bg-secondary/50 rounded-md p-2 text-center">
-              <p className="text-xs text-muted-foreground leading-none mb-1">{label}</p>
+              <p className="text-[9px] uppercase tracking-widest font-medium text-muted-foreground leading-none mb-1">{label}</p>
               <p className="text-base font-semibold font-mono">{value}</p>
             </div>
           ))}
         </div>
 
-        {/* Phase badge */}
-        <div className="flex justify-end">
-          <Badge
-            variant="outline"
-            className={cn(
-              "text-xs capitalize",
-              phase === "interest"  && "border-amber-500/50 text-amber-500",
-              phase === "bidding"   && "border-emerald-500/50 text-emerald-500",
-              phase === "concluded" && "border-border text-muted-foreground",
-            )}
-          >
+        {/* Phase indicator */}
+        <div className="flex justify-end items-center gap-1.5">
+          {(phase === "interest" || phase === "bidding") && (
+            <span className="relative flex h-2 w-2">
+              <span className={cn(
+                "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                phase === "bidding" ? "bg-emerald-400" : "bg-amber-400"
+              )} />
+              <span className={cn(
+                "relative inline-flex rounded-full h-2 w-2",
+                phase === "bidding" ? "bg-emerald-500" : "bg-amber-500"
+              )} />
+            </span>
+          )}
+          <span className={cn(
+            "text-xs",
+            phase === "interest"  && "text-amber-500",
+            phase === "bidding"   && "text-emerald-500",
+            phase === "concluded" && "text-muted-foreground",
+          )}>
             {phase === "interest" ? "Interest phase" : phase === "bidding" ? "Bidding open" : phase}
-          </Badge>
+          </span>
         </div>
       </CardContent>
     </Card>

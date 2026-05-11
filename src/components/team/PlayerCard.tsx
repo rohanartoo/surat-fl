@@ -44,7 +44,7 @@ export function PlayerCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex items-center justify-between py-2.5 px-2 rounded-md transition-colors group",
+        "flex items-center justify-between py-2.5 px-2 rounded-md transition-all duration-200 ease-out group",
         "hover:bg-accent/50",
         isDragging && "opacity-40",
       )}
@@ -130,7 +130,7 @@ export function PlayerCard({
 // Lightweight non-draggable version for overlay rendering
 export function PlayerCardOverlay({ entry, benchNumber }: Pick<Props, "entry" | "benchNumber">) {
   return (
-    <div className="flex items-center justify-between py-2.5 px-2 rounded-md shadow-lg bg-background border border-border">
+    <div className="flex items-center justify-between py-2.5 px-2 rounded-md shadow-2xl bg-background/80 backdrop-blur-md border border-primary/20 scale-[1.02] rotate-1 cursor-grabbing transition-transform">
       <div className="flex items-center gap-3">
         <div className="text-muted-foreground/40 cursor-grabbing">⠿</div>
         {benchNumber !== undefined && (
