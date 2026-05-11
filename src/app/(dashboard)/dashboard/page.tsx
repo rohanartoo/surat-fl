@@ -41,7 +41,7 @@ export default async function DashboardPage() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {highlights.playerOfTheWeek && (
-              <Card className="border-border/60">
+              <Card className="border-border/60 border-l-2 border-l-emerald-500/60">
                 <CardContent className="pt-5 pb-4 space-y-1">
                   <p className="text-xs text-muted-foreground uppercase tracking-wider">Player of the Week</p>
                   <div className="flex items-end justify-between">
@@ -64,7 +64,7 @@ export default async function DashboardPage() {
             )}
 
             {highlights.topTeam && (
-              <Card className="border-border/60">
+              <Card className="border-border/60 border-l-2 border-l-amber-500/60">
                 <CardContent className="pt-5 pb-4 space-y-1">
                   <p className="text-xs text-muted-foreground uppercase tracking-wider">Top Team</p>
                   <div className="flex items-end justify-between">

@@ -40,8 +40,8 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
                 key={row.team_id}
                 className={cn(
                   "transition-colors hover:bg-accent/30",
-                  isFirst && !isMe && "bg-amber-500/5",
-                  isMe && "bg-emerald-500/10 border-l-2 border-emerald-500",
+                  isFirst && !isMe && "bg-amber-500/10",
+                  isMe && "bg-emerald-500/15 border-l-2 border-emerald-500",
                 )}
               >
                 <td className="py-3 pr-4 text-muted-foreground font-mono text-xs">
@@ -57,7 +57,7 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
                   </div>
                 </td>
                 {gameweeks.map(gw => (
-                  <td key={gw} className="py-3 px-3 text-center font-mono text-xs text-muted-foreground tabular-nums">
+                  <td key={gw} className="py-3 px-3 text-center font-mono text-xs text-foreground/60 tabular-nums">
                     {row.by_gameweek[gw] !== undefined ? row.by_gameweek[gw] : "—"}
                   </td>
                 ))}

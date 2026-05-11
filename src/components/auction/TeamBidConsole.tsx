@@ -33,7 +33,7 @@ function TeamBidRow({
   return (
     <div className={cn(
       "flex items-center justify-between py-2 px-3 rounded-md transition-colors",
-      isCurrentTurn && "bg-amber-500/10 ring-1 ring-amber-500/30",
+      isCurrentTurn && "bg-amber-500/15 ring-2 ring-amber-500/50",
       (isFull || isFolded || notInterested) && "opacity-40",
     )}>
       <div className="flex items-center gap-2">
@@ -109,7 +109,7 @@ function MyBidPanel({
   if (phase === "interest") {
     const myInterest = myBid?.is_interested
     return (
-      <div className="space-y-3 p-4 rounded-lg border border-border/60 bg-secondary/20">
+      <div className="space-y-3 p-4 rounded-lg border border-border/60 bg-secondary/80">
         <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Your action</p>
         <div className="flex gap-2">
           <Button
@@ -138,7 +138,7 @@ function MyBidPanel({
   if (phase === "bidding") {
     if (isFolded) {
       return (
-        <div className="p-4 rounded-lg border border-border/60 bg-secondary/20">
+        <div className="p-4 rounded-lg border border-border/60 bg-secondary/80">
           <p className="text-sm text-muted-foreground italic">You folded. Waiting for result…</p>
         </div>
       )
@@ -146,7 +146,7 @@ function MyBidPanel({
 
     if (!isMyTurn) {
       return (
-        <div className="space-y-3 p-4 rounded-lg border border-border/60 bg-secondary/20">
+        <div className="space-y-3 p-4 rounded-lg border border-border/60 bg-secondary/80">
           <p className="text-sm text-muted-foreground italic">Waiting for other team to bid or fold…</p>
           {canUndo && (
             <Button
@@ -165,7 +165,7 @@ function MyBidPanel({
     }
 
     return (
-      <div className="space-y-3 p-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
+      <div className="space-y-3 p-4 rounded-lg border border-amber-500/50 bg-amber-500/10">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-amber-500">Your turn to bid</p>
           <div className="text-xs text-muted-foreground font-mono space-x-3">

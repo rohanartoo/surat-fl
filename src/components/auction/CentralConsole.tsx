@@ -41,8 +41,8 @@ export function CentralConsole() {
   return (
     <Card className={cn(
       "border",
-      phase === "bidding"  && "border-emerald-500/30 bg-emerald-500/3 shadow-[0_0_30px_rgba(16,185,129,0.05)]",
-      phase === "interest" && "border-amber-500/30 bg-amber-500/3",
+      phase === "bidding"  && "border-emerald-500/50 bg-emerald-500/8 shadow-[0_0_40px_rgba(16,185,129,0.15)]",
+      phase === "interest" && "border-amber-500/50 bg-amber-500/8",
       phase === "concluded" && "border-border/60 opacity-60",
       phase === "pending"  && "border-border/60",
     )}>
@@ -71,7 +71,7 @@ export function CentralConsole() {
           <div className="text-right shrink-0">
             {current_bid !== null ? (
               <>
-                <p className="text-2xl font-semibold font-mono tracking-tight text-emerald-500">
+                <p className="text-3xl font-bold font-mono tracking-tight text-emerald-500">
                   {formatMoney(current_bid)}
                 </p>
                 <p className="text-xs text-muted-foreground">current bid</p>
@@ -83,7 +83,7 @@ export function CentralConsole() {
               </>
             ) : (
               <>
-                <p className="text-2xl font-semibold font-mono tracking-tight text-muted-foreground">
+                <p className="text-3xl font-bold font-mono tracking-tight text-muted-foreground">
                   {formatMoney(player.base_price)}
                 </p>
                 <p className="text-xs text-muted-foreground">base price</p>
@@ -108,7 +108,7 @@ export function CentralConsole() {
         {/* Stats grid */}
         <div className="grid grid-cols-4 gap-2">
           {stats.map(({ label, value }) => (
-            <div key={label} className="bg-secondary/50 rounded-md p-2 text-center">
+            <div key={label} className="bg-secondary rounded-md p-2 text-center">
               <p className="text-[9px] uppercase tracking-widest font-medium text-muted-foreground leading-none mb-1">{label}</p>
               <p className="text-base font-semibold font-mono">{value}</p>
             </div>
