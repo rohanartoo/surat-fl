@@ -35,7 +35,7 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border/60">
-            <th className="text-left font-medium text-muted-foreground pb-3 pl-2 pr-4 w-10">#</th>
+            <th className="text-left font-medium text-muted-foreground pb-3 pl-2 pr-4 w-14">#</th>
             <th className="text-left font-medium text-muted-foreground pb-3 pr-4">Team</th>
             {latestGw !== null && (
               <th className="text-center font-semibold text-foreground pb-3 px-3 w-16 tabular-nums">
@@ -66,7 +66,7 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
                 {/* Rank + movement */}
                 <td className="py-3 pl-2 pr-4">
                   <div className="flex items-center gap-1">
-                    <span className="text-muted-foreground font-mono text-xs w-3 text-right">
+                    <span className="text-muted-foreground font-mono text-xs w-5 text-right shrink-0">
                       {isFirst ? "🥇" : idx + 1}
                     </span>
                     <MovementIndicator change={row.position_change} />
