@@ -270,11 +270,22 @@ describe("validateFormation", () => {
     expect(validateFormation(xi)).toMatch(/DEF/)
   })
   it("rejects 0 FWD", () => {
+    // 1 GK + 5 DEF + 5 MID = 11, but 0 FWD violates min
     const xi = [
       makePos("GK"),
-      ...Array(4).fill(makePos("DEF")),
-      ...Array(6).fill(makePos("MID")),
+      ...Array(5).fill(makePos("DEF")),
+      ...Array(5).fill(makePos("MID")),
     ]
     expect(validateFormation(xi)).toMatch(/FWD/)
+  })
+  it("rejects 2 GKs in starting XI", () => {
+    const xi = [
+      makePos("GK"),
+      makePos("GK"),
+      ...Array(3).fill(makePos("DEF")),
+      ...Array(3).fill(makePos("MID")),
+      ...Array(3).fill(makePos("FWD")),
+    ]
+    expect(validateFormation(xi)).toMatch(/GK/)
   })
 })

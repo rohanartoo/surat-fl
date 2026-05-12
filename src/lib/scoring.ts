@@ -41,6 +41,10 @@ export function applyAutoSubs(
       if (usedBenchIds.has(bencher.id)) continue
       if ((liveStats[bencher.player_id]?.minutes ?? 0) === 0) continue
 
+      // GK can only replace GK, and only a GK can replace GK
+      if (bencher.position === "GK" && starter.position !== "GK") continue
+      if (starter.position === "GK" && bencher.position !== "GK") continue
+
       // Check formation is still valid after the swap
       const simPositions = effectiveXI.map((x, idx) =>
         ({ position: idx === i ? bencher.position : x.entry.position })

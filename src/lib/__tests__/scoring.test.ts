@@ -61,18 +61,18 @@ describe("applyAutoSubs", () => {
     expect(result.map(r => r.entry.player_id)).toEqual(starting.map(e => e.player_id))
   })
 
-  it("subs in the first bench player (by bench_order) who played", () => {
+  it("subs in the first valid outfield bench player when a FWD starter didn't play", () => {
     const { starting, bench } = makeSquad()
     const liveStats = allPlayed()
     // FWD starter (player 10) didn't play
     // bench sorted by bench_order: GK(12,1), DEF(13,2), MID(14,3), FWD(15,4)
-    // GK(12) played and validateFormation only checks minimums — 2 GKs is allowed
-    // so GK(12) is subbed in first (bench_order=1)
+    // GK(12) is skipped — cannot replace an outfield player
+    // DEF(13) replacing FWD: 4DEF + 4MID + 1FWD — valid (min 1 FWD still met)
     liveStats[10] = stats(0)
     const result = applyAutoSubs(starting, bench, liveStats)
     const subbedIn = result.filter(r => r.wasSubbedIn)
     expect(subbedIn).toHaveLength(1)
-    expect(subbedIn[0].entry.player_id).toBe(12) // GK bench player (bench_order=1, first in priority)
+    expect(subbedIn[0].entry.player_id).toBe(13) // DEF bench player (first valid non-GK)
   })
 
   it("respects bench priority — skips bench players who didn't play", () => {
@@ -90,10 +90,8 @@ describe("applyAutoSubs", () => {
   })
 
   it("blocks sub when the only available bencher would violate formation minimum", () => {
-    // Build a 3-5-2 starting XI where replacing a DEF with a FWD would drop below min 3 DEF
-    // Starting: GK, DEF, DEF, DEF, MID×5, FWD×2 (3-5-2)
-    // Bench: just a FWD (bench_order=1, played)
-    // If DEF starter doesn't play, the only bencher is FWD → DEF count drops to 2 → invalid
+    // 3-5-2: if a DEF doesn't play and the only bench player is FWD,
+    // subbing in would drop DEF count to 2 — below minimum of 3
     const starting3 = [
       makeEntry(1, "starting", "GK"),
       makeEntry(2, "starting", "DEF"),
@@ -111,14 +109,26 @@ describe("applyAutoSubs", () => {
     const liveStats: Record<number, { minutes: number; total_points: number }> = {}
     for (let i = 1; i <= 11; i++) liveStats[i] = stats(90)
     liveStats[20] = stats(90)
-    // DEF starter (player 2) didn't play
-    liveStats[2] = stats(0)
-    // FWD bench (20) played but subbing in for DEF would leave only 2 DEF → blocks
+    liveStats[2] = stats(0) // DEF starter didn't play
     const result = applyAutoSubs(starting3, bench3, liveStats)
     const player2result = result.find(r => r.entry.player_id === 2)
     expect(player2result).toBeDefined()
     expect(player2result?.wasSubbedIn).toBe(false)
     expect(player2result?.entry.player_id).toBe(2)
+  })
+
+  it("GK bench player cannot sub in for an outfield starter", () => {
+    const { starting, bench } = makeSquad()
+    const liveStats = allPlayed()
+    liveStats[10] = stats(0) // FWD starter didn't play
+    // Make all bench players except GK also not play
+    liveStats[13] = stats(0)
+    liveStats[14] = stats(0)
+    liveStats[15] = stats(0)
+    // Only GK bench (12) played — but cannot sub for FWD
+    const result = applyAutoSubs(starting, bench, liveStats)
+    expect(result.every(r => !r.wasSubbedIn)).toBe(true)
+    expect(result.find(r => r.entry.player_id === 10)?.entry.player_id).toBe(10)
   })
 
   it("handles multiple substitutions in order", () => {

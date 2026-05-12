@@ -235,8 +235,12 @@ export function validateFormation(starting: { position: Position }[]): string | 
   for (const pos of ["GK", "DEF", "MID", "FWD"] as Position[]) {
     const count = starting.filter(p => p.position === pos).length
     const min = SQUAD_RULES.min_starting[pos]
+    const max = SQUAD_RULES.max_starting[pos]
     if (count < min) {
       return `Starting XI needs at least ${min} ${pos}${min > 1 ? "s" : ""} (currently ${count})`
+    }
+    if (count > max) {
+      return `Starting XI can have at most ${max} ${pos}${max > 1 ? "s" : ""} (currently ${count})`
     }
   }
   return null
