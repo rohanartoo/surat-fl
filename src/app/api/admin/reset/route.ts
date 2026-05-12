@@ -15,7 +15,9 @@ function createClient() {
  * Two modes:
  *
  * 1. Targeted rollback — body: { auction_id }
- *    Restores league to pre-auction snapshot then deletes the auction.
+ *    Restores league to pre-auction snapshot and returns the auction to
+ *    pending state (lots, bids, and log cleared). The auction order is
+ *    preserved so the AM can start again without re-configuring.
  *    Available to auction_master and admin.
  *
  * 2. Full wipe — body: {} (no auction_id)
@@ -45,9 +47,24 @@ async function handleTargetedReset(auction_id: string) {
     return NextResponse.json({ error: "No snapshot found for this auction. Cannot roll back." }, { status: 404 })
   }
 
-  // Delete the auction (cascades to lots, bids, log, transfer records, snapshot)
-  const { error: auctionErr } = await supabase.from("auctions").delete().eq("id", auction_id)
-  if (auctionErr) return NextResponse.json({ error: `auction delete: ${auctionErr.message}` }, { status: 500 })
+  // Clear all lots, bids, and log entries for this auction so the AM can
+  // start fresh — but keep the auction record itself in pending state with
+  // the configured auction_order intact.
+  await Promise.all([
+    supabase.from("auction_lots").delete().eq("auction_id", auction_id),
+    supabase.from("auction_log").delete().eq("auction_id", auction_id),
+  ])
+
+  const { error: auctionErr } = await supabase
+    .from("auctions")
+    .update({
+      status: "pending",
+      started_at: null,
+      current_position_category: "GK",
+      current_bidder_index: 0,
+    })
+    .eq("id", auction_id)
+  if (auctionErr) return NextResponse.json({ error: `auction reset: ${auctionErr.message}` }, { status: 500 })
 
   return NextResponse.json({ ok: true, mode: "rollback" })
 }

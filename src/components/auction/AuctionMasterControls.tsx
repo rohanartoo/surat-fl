@@ -100,7 +100,7 @@ export function AuctionMasterControls() {
       {confirmReset ? (
         <div className="space-y-1.5">
           <p className="text-xs text-destructive">
-            This will roll back to the pre-auction snapshot — rosters, budgets, and drops will be restored. Are you sure?
+            This will restore all rosters and budgets to their pre-auction state and return the auction to pending. Your team order will be preserved. Are you sure?
           </p>
           <div className="flex gap-2">
             <Button size="sm" variant="destructive" className="flex-1" disabled={resetLoading} onClick={handleReset}>
