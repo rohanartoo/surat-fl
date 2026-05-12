@@ -159,8 +159,12 @@ export function AuctionMasterControls() {
     </div>
   ) : undefined
 
-  // End-draft eligibility — all teams need SQUAD_RULES.total players
-  const totalByTeam = teams.map(t => {
+  // End-draft eligibility — only participating teams need SQUAD_RULES.total players
+  const auctionOrder = (auction?.auction_order as string[] | null) ?? null
+  const participatingTeams = auctionOrder
+    ? teams.filter(t => auctionOrder.includes(t.id))
+    : teams
+  const totalByTeam = participatingTeams.map(t => {
     const filled = filledSlotsByTeam[t.id] ?? {}
     return Object.values(filled).reduce((s, n) => s + n, 0)
   })
