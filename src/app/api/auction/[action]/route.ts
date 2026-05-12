@@ -207,7 +207,7 @@ async function handleOpenLot(request: NextRequest) {
   if (openLot) return err("A lot is already open.")
 
   const { data: player } = await supabase
-    .from("players").select("id, web_name, position, base_price").eq("id", player_id).single()
+    .from("players").select("id, web_name, position, base_price, fpl_team").eq("id", player_id).single()
   if (!player) return err("Player not found.", 404)
   if (player.position !== auction.current_position_category) {
     return err(`Player is ${player.position} but auction is on ${auction.current_position_category}.`)
@@ -237,19 +237,25 @@ async function handleOpenLot(request: NextRequest) {
 
     const { data: rosterRows } = await supabase
       .from("roster_entries")
-      .select("team_id, player:players(position)")
+      .select("team_id, player:players(position, fpl_team)")
       .in("slot_type", ["starting", "bench"])
 
     const filledByTeam: Record<string, number> = {}
+    const clubCountByTeam: Record<string, number> = {}
     for (const row of rosterRows ?? []) {
-      const pos = (row.player as unknown as { position: string } | null)?.position
-      if (pos === position) {
+      const p = (row.player as unknown as { position: string; fpl_team: string } | null)
+      if (p?.position === position) {
         filledByTeam[row.team_id] = (filledByTeam[row.team_id] ?? 0) + 1
+      }
+      if (p?.fpl_team === player.fpl_team) {
+        clubCountByTeam[row.team_id] = (clubCountByTeam[row.team_id] ?? 0) + 1
       }
     }
 
     const maxSlots = SQUAD_RULES.slots[position as Position]
-    const eligibleTeamIds = allTeamIds.filter(id => (filledByTeam[id] ?? 0) < maxSlots)
+    const eligibleTeamIds = allTeamIds.filter(
+      id => (filledByTeam[id] ?? 0) < maxSlots && (clubCountByTeam[id] ?? 0) < SQUAD_RULES.max_per_club
+    )
 
     if (eligibleTeamIds.length === 0) {
       return err("No teams have open slots for this position.")
@@ -371,6 +377,28 @@ async function handleDeclareInterest(request: NextRequest) {
 
       if (!postWindowAuction) {
         return err("You cannot re-draft a player you dropped. Re-drafting is only allowed from the post-January transfer window auction onwards.")
+      }
+    }
+  }
+
+  // Club cap: max 3 players from the same FPL club
+  if (is_interested) {
+    const { data: lotPlayer } = await supabase
+      .from("players").select("fpl_team").eq("id", lot.player_id).single()
+
+    if (lotPlayer?.fpl_team) {
+      const { data: clubRoster } = await supabase
+        .from("roster_entries")
+        .select("player:players(fpl_team)")
+        .eq("team_id", profile.team_id)
+        .in("slot_type", ["starting", "bench"])
+
+      const clubCount = (clubRoster ?? []).filter(
+        (r) => (r.player as unknown as { fpl_team: string } | null)?.fpl_team === lotPlayer.fpl_team
+      ).length
+
+      if (clubCount >= SQUAD_RULES.max_per_club) {
+        return err(`You already have ${SQUAD_RULES.max_per_club} players from ${lotPlayer.fpl_team}. Club cap reached.`)
       }
     }
   }
@@ -766,6 +794,27 @@ async function autoAssign(supabase: any, lot: any, auction: any, teamId: string,
 
   const newBudget = team.budget - price
   if (newBudget < 0) return err("Team cannot afford this player.")
+
+  // Club cap: max 3 players from the same FPL club
+  const { data: assignedPlayer } = await supabase
+    .from("players").select("fpl_team").eq("id", lot.player_id).single()
+
+  if (assignedPlayer?.fpl_team) {
+    const { data: clubRoster } = await supabase
+      .from("roster_entries")
+      .select("player:players(fpl_team)")
+      .eq("team_id", teamId)
+      .in("slot_type", ["starting", "bench"])
+
+    const clubCount = (clubRoster ?? []).filter(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (r: any) => (r.player as { fpl_team: string } | null)?.fpl_team === assignedPlayer.fpl_team
+    ).length
+
+    if (clubCount >= SQUAD_RULES.max_per_club) {
+      return err(`Club cap reached: team already has ${SQUAD_RULES.max_per_club} players from ${assignedPlayer.fpl_team}.`)
+    }
+  }
 
   // Determine correct slot (starting vs bench) based on current roster
   const { data: currentRoster } = await supabase

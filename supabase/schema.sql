@@ -1,322 +1,660 @@
 -- =============================================
--- Surat Fantasy League — Supabase Schema v2
--- FROM SCRATCH — run in Supabase SQL Editor
+-- Surat Fantasy League — Supabase Schema
+-- (Auto-generated via pg_dump, commented for readability)
 -- =============================================
 
-create extension if not exists "pgcrypto";
 
--- =============================================
--- PROFILES (role-based auth on top of Supabase Auth)
--- =============================================
--- Username auth: Supabase email = username@surat-fl.internal (hidden from users)
-create table public.profiles (
-  id           uuid primary key references auth.users(id) on delete cascade,
-  role         text not null check (role in ('admin', 'auction_master', 'team', 'guest'))
-                 default 'team',
-  username     text not null unique,
-  display_name text not null,
-  team_id      uuid, -- populated for 'team' role; null for admin/am/guest
-  created_at   timestamptz not null default now()
-);
 
--- =============================================
--- TEAMS
--- =============================================
-create table public.teams (
-  id            uuid primary key default gen_random_uuid(),
-  display_name  text not null,
-  short_name    text not null,
-  budget        numeric(6,2) not null default 100.00,  -- £100m
-  color         text not null default '#10b981',
-  auction_order integer, -- 1 = first to bid; set manually based on previous year standings
-  created_at    timestamptz not null default now()
-);
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
 
--- Now we can add the FK from profiles → teams
-alter table public.profiles
-  add constraint profiles_team_id_fkey
-  foreign key (team_id) references public.teams(id) on delete set null;
+COMMENT ON SCHEMA "public" IS 'standard public schema';
 
--- =============================================
--- PLAYERS (synced from FPL API)
--- =============================================
-create table public.players (
-  id                  integer primary key,   -- FPL element ID
-  first_name          text not null,
-  second_name         text not null,
-  web_name            text not null,
-  position            text not null check (position in ('GK', 'DEF', 'MID', 'FWD')),
-  fpl_team            text not null default '',
-  fpl_team_short      text not null default '',
-  selected_by_percent numeric(5,2) not null default 0,
-  -- Season stats for auction console display
-  total_points        integer not null default 0,
-  goals_scored        integer not null default 0,
-  assists             integer not null default 0,
-  clean_sheets        integer not null default 0,
-  bonus               integer not null default 0,
-  yellow_cards        integer not null default 0,
-  red_cards           integer not null default 0,
-  minutes             integer not null default 0,
-  -- base_price tracks the auction price history (starts at £1m, updated on win/drop)
-  base_price          numeric(5,2) not null default 1.00,
-  fpl_cost            numeric(5,2) not null default 0, -- stored but not displayed
-  status              text not null default 'a', -- a=available, d=doubt, i=injured, s=sus, u=unavail
-  news                text not null default '',
-  updated_at          timestamptz not null default now()
-);
+CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
 
--- =============================================
--- ROSTER ENTRIES
--- =============================================
-create table public.roster_entries (
-  id             uuid primary key default gen_random_uuid(),
-  team_id        uuid not null references public.teams(id) on delete cascade,
-  player_id      integer not null references public.players(id),
-  slot_type      text not null check (slot_type in ('starting', 'bench', 'dropped'))
-                   default 'starting',
-  bench_order    integer, -- 1–4 for bench slots; null for starting/dropped
-  is_captain     boolean not null default false,
-  is_vice_captain boolean not null default false,
-  base_price     numeric(5,2) not null, -- price this team paid (or half-price on re-entry)
-  purchased_at   timestamptz not null default now(),
+CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
 
-  -- A player can only be on one active squad at a time
-  -- (dropped entries are kept for history; slot_type='dropped' means staged for next auction)
-  constraint unique_active_player_per_team unique (player_id, team_id)
-);
+CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
 
--- =============================================
--- AUCTIONS
--- =============================================
-create table public.auctions (
-  id                       uuid primary key default gen_random_uuid(),
-  type                     text not null default 'initial'
-                             check (type in ('initial', 'mini', 'post_jan')),
-  status                   text not null default 'pending'
-                             check (status in ('pending', 'active', 'completed')),
-  gameweek                 integer,
-  -- Which position category is currently being auctioned
-  current_position_category text check (current_position_category in ('GK','DEF','MID','FWD')),
-  -- Ordered array of team IDs for bid priority [team_id, team_id, ...]
-  auction_order            jsonb not null default '[]',
-  -- Index into auction_order pointing to which team has current bid priority
-  current_bidder_index     integer not null default 0,
-  -- Free transfers for this auction window
-  free_transfers           integer not null default 2,
-  created_at               timestamptz not null default now(),
-  started_at               timestamptz,
-  completed_at             timestamptz
-);
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
--- =============================================
--- AUCTION LOTS (one per player being auctioned)
--- =============================================
-create table public.auction_lots (
-  id                  uuid primary key default gen_random_uuid(),
-  auction_id          uuid not null references public.auctions(id) on delete cascade,
-  player_id           integer not null references public.players(id),
-  phase               text not null default 'pending'
-                        check (phase in ('pending', 'interest', 'bidding', 'concluded')),
-  timer_started_at    timestamptz,
-  current_bid         numeric(5,2),
-  current_bidder_id   uuid references public.teams(id),
-  -- Which index in auction_order the bidding round started at (for rotation)
-  bid_start_team_index integer not null default 0,
-  winning_team_id     uuid references public.teams(id),
-  winning_bid         numeric(5,2),
-  created_at          timestamptz not null default now()
-);
+CREATE OR REPLACE FUNCTION "public"."get_my_role"() RETURNS "text"
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    AS $$
+  select role from public.profiles where id = auth.uid()
+$$;
 
--- =============================================
--- BIDS (interest declarations + bid amounts)
--- =============================================
-create table public.bids (
-  id            uuid primary key default gen_random_uuid(),
-  lot_id        uuid not null references public.auction_lots(id) on delete cascade,
-  team_id       uuid not null references public.teams(id),
-  amount        numeric(5,2),       -- null during interest phase
-  is_interested boolean not null default true, -- false = passed on this player
-  is_folded     boolean not null default false, -- folded during bid round (eliminated)
-  created_at    timestamptz not null default now(),
+ALTER FUNCTION "public"."get_my_role"() OWNER TO "postgres";
 
-  constraint unique_bid_per_team_per_lot unique (lot_id, team_id)
-);
+CREATE OR REPLACE FUNCTION "public"."get_my_team_id"() RETURNS "uuid"
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    AS $$
+  select team_id from public.profiles where id = auth.uid()
+$$;
+
+ALTER FUNCTION "public"."get_my_team_id"() OWNER TO "postgres";
+
+SET default_tablespace = '';
+
+SET default_table_access_method = "heap";
 
 -- =============================================
 -- AUCTION LOG (for 10-move undo + live feed)
 -- =============================================
-create table public.auction_log (
-  id          uuid primary key default gen_random_uuid(),
-  auction_id  uuid not null references public.auctions(id) on delete cascade,
-  action_type text not null,
-  -- e.g. 'player_assigned', 'bid_placed', 'timer_reset', 'bid_corrected', 'draft_ended'
-  payload     jsonb not null default '{}',
-  -- For undo: store enough to fully reverse the action
-  -- payload for player_assigned: { lot_id, team_id, amount, prev_base_price, prev_budget }
-  created_at  timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS "public"."auction_log" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "auction_id" "uuid" NOT NULL,
+    "action_type" "text" NOT NULL,
+    "payload" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
 );
 
--- =============================================
--- TEAM DROPS (drop staging for each auction)
--- =============================================
-create table public.team_drops (
-  id                      uuid primary key default gen_random_uuid(),
-  team_id                 uuid not null references public.teams(id),
-  auction_id              uuid not null references public.auctions(id),
-  player_id               integer not null references public.players(id),
-  drop_price              numeric(5,2), -- ceil(purchase_price * 0.5); set on lock
-  status                  text not null default 'staged'
-                            check (status in ('staged', 'locked', 'cancelled')),
-  -- Restriction flags (evaluated when drops are locked at auction start)
-  dropped_post_january    boolean not null default false,
-  -- The gameweek in which the -4pt penalty will be applied (set at lock time)
-  penalty_gameweek        integer,
-  created_at              timestamptz not null default now(),
+ALTER TABLE "public"."auction_log" OWNER TO "postgres";
 
-  constraint unique_drop_per_player_per_auction unique (player_id, auction_id)
+-- =============================================
+-- AUCTION LOTS (one per player being auctioned)
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."auction_lots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "auction_id" "uuid" NOT NULL,
+    "player_id" integer NOT NULL,
+    "phase" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "timer_started_at" timestamp with time zone,
+    "current_bid" numeric(5,2),
+    "current_bidder_id" "uuid",
+    "bid_start_team_index" integer DEFAULT 0 NOT NULL,
+    "winning_team_id" "uuid",
+    "winning_bid" numeric(5,2),
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "current_turn_team_id" "uuid",
+    CONSTRAINT "auction_lots_phase_check" CHECK (("phase" = ANY (ARRAY['pending'::"text", 'interest'::"text", 'bidding'::"text", 'concluded'::"text"])))
 );
 
--- =============================================
--- TEAM DROP TRANSFER RECORDS (free transfer tracking)
--- =============================================
-create table public.team_transfer_records (
-  id                       uuid primary key default gen_random_uuid(),
-  team_id                  uuid not null references public.teams(id),
-  auction_id               uuid not null references public.auctions(id),
-  free_transfers_base      integer not null default 2,
-  free_transfers_carryover integer not null default 0, -- max 1 rolled over
-  transfers_used           integer not null default 0,
-  -- Excess = max(0, transfers_used - (free_transfers_base + free_transfers_carryover))
-  excess_drops             integer not null default 0,
-  points_penalty           integer not null default 0, -- -4 * excess_drops
+ALTER TABLE "public"."auction_lots" OWNER TO "postgres";
 
-  constraint unique_team_auction unique (team_id, auction_id)
+-- =============================================
+-- AUCTION SNAPSHOTS (point-in-time state)
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."auction_snapshots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "auction_id" "uuid" NOT NULL,
+    "snapshot" "jsonb" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
 );
+
+ALTER TABLE "public"."auction_snapshots" OWNER TO "postgres";
+
+-- =============================================
+-- AUCTIONS
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."auctions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "type" "text" DEFAULT 'initial'::"text" NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "gameweek" integer,
+    "current_position_category" "text",
+    "auction_order" "jsonb" DEFAULT '[]'::"jsonb" NOT NULL,
+    "current_bidder_index" integer DEFAULT 0 NOT NULL,
+    "free_transfers" integer DEFAULT 2 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "started_at" timestamp with time zone,
+    "completed_at" timestamp with time zone,
+    CONSTRAINT "auctions_current_position_category_check" CHECK (("current_position_category" = ANY (ARRAY['GK'::"text", 'DEF'::"text", 'MID'::"text", 'FWD'::"text"]))),
+    CONSTRAINT "auctions_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'active'::"text", 'completed'::"text"]))),
+    CONSTRAINT "auctions_type_check" CHECK (("type" = ANY (ARRAY['initial'::"text", 'mini'::"text", 'post_jan'::"text", 'post_summer'::"text"])))
+);
+
+ALTER TABLE "public"."auctions" OWNER TO "postgres";
+
+-- =============================================
+-- BIDS (interest declarations + bid amounts)
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."bids" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "lot_id" "uuid" NOT NULL,
+    "team_id" "uuid" NOT NULL,
+    "amount" numeric(5,2),
+    "is_interested" boolean DEFAULT true NOT NULL,
+    "is_folded" boolean DEFAULT false NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+ALTER TABLE "public"."bids" OWNER TO "postgres";
+
+-- =============================================
+-- CHAT KICKS (moderation)
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."chat_kicks" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "guest_name" "text" NOT NULL,
+    "kicked_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+ALTER TABLE "public"."chat_kicks" OWNER TO "postgres";
+
+-- =============================================
+-- CHAT MESSAGES
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."chat_messages" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "auction_id" "uuid",
+    "user_id" "uuid",
+    "author_name" "text" NOT NULL,
+    "is_guest" boolean DEFAULT false NOT NULL,
+    "message" "text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "chat_messages_message_check" CHECK ((("char_length"("message") >= 1) AND ("char_length"("message") <= 500)))
+);
+
+ALTER TABLE "public"."chat_messages" OWNER TO "postgres";
 
 -- =============================================
 -- GAMEWEEK POINTS (scoring)
 -- =============================================
-create table public.gameweek_points (
-  id            uuid primary key default gen_random_uuid(),
-  team_id       uuid not null references public.teams(id),
-  gameweek      integer not null,
-  player_id     integer not null references public.players(id),
-  points        integer not null default 0,
-  was_subbed_in boolean not null default false, -- true if this was an auto-sub
-  created_at    timestamptz not null default now(),
-
-  constraint unique_player_team_gw unique (team_id, gameweek, player_id)
+CREATE TABLE IF NOT EXISTS "public"."gameweek_points" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "team_id" "uuid" NOT NULL,
+    "gameweek" integer NOT NULL,
+    "player_id" integer,
+    "points" integer DEFAULT 0 NOT NULL,
+    "was_subbed_in" boolean DEFAULT false NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
 );
 
--- =============================================
--- ROW LEVEL SECURITY
--- =============================================
-alter table public.profiles enable row level security;
-alter table public.teams enable row level security;
-alter table public.players enable row level security;
-alter table public.roster_entries enable row level security;
-alter table public.auctions enable row level security;
-alter table public.auction_lots enable row level security;
-alter table public.bids enable row level security;
-alter table public.auction_log enable row level security;
-alter table public.team_drops enable row level security;
-alter table public.team_transfer_records enable row level security;
-alter table public.gameweek_points enable row level security;
-
--- Helper: get the current user's role
-create or replace function public.get_my_role()
-returns text language sql stable security definer as $$
-  select role from public.profiles where id = auth.uid()
-$$;
-
--- Helper: get the current user's team_id
-create or replace function public.get_my_team_id()
-returns uuid language sql stable security definer as $$
-  select team_id from public.profiles where id = auth.uid()
-$$;
-
--- ── READ policies (all authenticated + anon guests can read everything) ──────
-
-create policy "Anyone can read profiles"     on public.profiles         for select using (true);
-create policy "Anyone can read teams"        on public.teams            for select using (true);
-create policy "Anyone can read players"      on public.players          for select using (true);
-create policy "Anyone can read roster"       on public.roster_entries   for select using (true);
-create policy "Anyone can read auctions"     on public.auctions         for select using (true);
-create policy "Anyone can read lots"         on public.auction_lots     for select using (true);
-create policy "Anyone can read bids"         on public.bids             for select using (true);
-create policy "Anyone can read log"          on public.auction_log      for select using (true);
-create policy "Anyone can read drops"        on public.team_drops       for select using (true);
-create policy "Anyone can read transfers"    on public.team_transfer_records for select using (true);
-create policy "Anyone can read gw points"   on public.gameweek_points  for select using (true);
-
--- ── WRITE policies ────────────────────────────────────────────────────────────
-
--- Admin: full write on everything
-create policy "Admin full write profiles"    on public.profiles    for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write teams"       on public.teams       for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write players"     on public.players     for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write roster"      on public.roster_entries for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write auctions"    on public.auctions    for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write lots"        on public.auction_lots for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write bids"        on public.bids        for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write log"         on public.auction_log for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write drops"       on public.team_drops  for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write transfers"   on public.team_transfer_records for all to authenticated using (get_my_role() = 'admin');
-create policy "Admin full write gw points"   on public.gameweek_points for all to authenticated using (get_my_role() = 'admin');
-
--- Auction Master: write on auction-related tables (admin already covered above)
-create policy "AM write auctions"     on public.auctions       for all to authenticated using (get_my_role() in ('admin','auction_master'));
-create policy "AM write lots"         on public.auction_lots   for all to authenticated using (get_my_role() in ('admin','auction_master'));
-create policy "AM write log"          on public.auction_log    for all to authenticated using (get_my_role() in ('admin','auction_master'));
-create policy "AM write drops lock"   on public.team_drops     for update to authenticated using (get_my_role() in ('admin','auction_master'));
-create policy "AM write transfers"    on public.team_transfer_records for all to authenticated using (get_my_role() in ('admin','auction_master'));
-create policy "AM write gw points"    on public.gameweek_points for all to authenticated using (get_my_role() in ('admin','auction_master'));
-
--- Teams: write own bids + own roster entries + own drops
-create policy "Team writes own bids" on public.bids
-  for insert to authenticated
-  with check (team_id = get_my_team_id());
-
-create policy "Team writes own roster" on public.roster_entries
-  for all to authenticated
-  using (team_id = get_my_team_id());
-
-create policy "Team stages own drops" on public.team_drops
-  for insert to authenticated
-  with check (team_id = get_my_team_id() and status = 'staged');
-
-create policy "Team updates own staged drops" on public.team_drops
-  for update to authenticated
-  using (team_id = get_my_team_id() and status = 'staged');
-
--- Service role: sync players from FPL API
-create policy "Service role syncs players" on public.players
-  for all to service_role using (true);
-
--- Profiles: users can update their own password/display_name
-create policy "User updates own profile" on public.profiles
-  for update to authenticated
-  using (id = auth.uid());
+ALTER TABLE "public"."gameweek_points" OWNER TO "postgres";
 
 -- =============================================
--- REALTIME
+-- PLAYERS (synced from FPL API)
 -- =============================================
-alter publication supabase_realtime add table public.auction_lots;
-alter publication supabase_realtime add table public.bids;
-alter publication supabase_realtime add table public.auction_log;
-alter publication supabase_realtime add table public.teams;
-alter publication supabase_realtime add table public.roster_entries;
+CREATE TABLE IF NOT EXISTS "public"."players" (
+    "id" integer NOT NULL,
+    "first_name" "text" NOT NULL,
+    "second_name" "text" NOT NULL,
+    "web_name" "text" NOT NULL,
+    "position" "text" NOT NULL,
+    "fpl_team" "text" DEFAULT ''::"text" NOT NULL,
+    "fpl_team_short" "text" DEFAULT ''::"text" NOT NULL,
+    "selected_by_percent" numeric(5,2) DEFAULT 0 NOT NULL,
+    "total_points" integer DEFAULT 0 NOT NULL,
+    "goals_scored" integer DEFAULT 0 NOT NULL,
+    "assists" integer DEFAULT 0 NOT NULL,
+    "clean_sheets" integer DEFAULT 0 NOT NULL,
+    "bonus" integer DEFAULT 0 NOT NULL,
+    "yellow_cards" integer DEFAULT 0 NOT NULL,
+    "red_cards" integer DEFAULT 0 NOT NULL,
+    "minutes" integer DEFAULT 0 NOT NULL,
+    "base_price" numeric(5,2) DEFAULT 1.00 NOT NULL,
+    "fpl_cost" numeric(5,2) DEFAULT 0 NOT NULL,
+    "status" "text" DEFAULT 'a'::"text" NOT NULL,
+    "news" "text" DEFAULT ''::"text" NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "players_position_check" CHECK (("position" = ANY (ARRAY['GK'::"text", 'DEF'::"text", 'MID'::"text", 'FWD'::"text"])))
+);
+
+ALTER TABLE "public"."players" OWNER TO "postgres";
 
 -- =============================================
--- SEED: 7 teams
--- Update display_name, short_name, color, auction_order after creation
+-- PROFILES (role-based auth on top of Supabase Auth)
 -- =============================================
-insert into public.teams (display_name, short_name, color, auction_order) values
-  ('Team 1 FC', 'T1', '#10b981', 1),
-  ('Team 2 FC', 'T2', '#3b82f6', 2),
-  ('Team 3 FC', 'T3', '#f59e0b', 3),
-  ('Team 4 FC', 'T4', '#ef4444', 4),
-  ('Team 5 FC', 'T5', '#8b5cf6', 5),
-  ('Team 6 FC', 'T6', '#ec4899', 6),
-  ('Team 7 FC', 'T7', '#06b6d4', 7);
+CREATE TABLE IF NOT EXISTS "public"."profiles" (
+    "id" "uuid" NOT NULL,
+    "role" "text" DEFAULT 'team'::"text" NOT NULL,
+    "username" "text" NOT NULL,
+    "display_name" "text" NOT NULL,
+    "team_id" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "profiles_role_check" CHECK (("role" = ANY (ARRAY['admin'::"text", 'auction_master'::"text", 'team'::"text", 'guest'::"text"])))
+);
+
+ALTER TABLE "public"."profiles" OWNER TO "postgres";
+
+-- =============================================
+-- ROSTER ENTRIES
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."roster_entries" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "team_id" "uuid" NOT NULL,
+    "player_id" integer NOT NULL,
+    "slot_type" "text" DEFAULT 'starting'::"text" NOT NULL,
+    "bench_order" integer,
+    "is_captain" boolean DEFAULT false NOT NULL,
+    "is_vice_captain" boolean DEFAULT false NOT NULL,
+    "base_price" numeric(5,2) NOT NULL,
+    "purchased_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "roster_entries_slot_type_check" CHECK (("slot_type" = ANY (ARRAY['starting'::"text", 'bench'::"text", 'dropped'::"text"])))
+);
+
+ALTER TABLE "public"."roster_entries" OWNER TO "postgres";
+
+-- =============================================
+-- TEAM DROPS (drop staging for each auction)
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."team_drops" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "team_id" "uuid" NOT NULL,
+    "auction_id" "uuid" NOT NULL,
+    "player_id" integer NOT NULL,
+    "drop_price" numeric(5,2),
+    "status" "text" DEFAULT 'staged'::"text" NOT NULL,
+    "dropped_post_january" boolean DEFAULT false NOT NULL,
+    "penalty_gameweek" integer,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "dropped_post_summer" boolean DEFAULT false NOT NULL,
+    CONSTRAINT "team_drops_status_check" CHECK (("status" = ANY (ARRAY['staged'::"text", 'locked'::"text", 'cancelled'::"text"])))
+);
+
+ALTER TABLE "public"."team_drops" OWNER TO "postgres";
+
+-- =============================================
+-- TEAM DROP TRANSFER RECORDS (free transfer tracking)
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."team_transfer_records" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "team_id" "uuid" NOT NULL,
+    "auction_id" "uuid" NOT NULL,
+    "free_transfers_base" integer DEFAULT 2 NOT NULL,
+    "free_transfers_carryover" integer DEFAULT 0 NOT NULL,
+    "transfers_used" integer DEFAULT 0 NOT NULL,
+    "excess_drops" integer DEFAULT 0 NOT NULL,
+    "points_penalty" integer DEFAULT 0 NOT NULL
+);
+
+ALTER TABLE "public"."team_transfer_records" OWNER TO "postgres";
+
+-- =============================================
+-- TEAMS
+-- =============================================
+CREATE TABLE IF NOT EXISTS "public"."teams" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "display_name" "text" NOT NULL,
+    "short_name" "text" NOT NULL,
+    "budget" numeric(6,2) DEFAULT 100.00 NOT NULL,
+    "color" "text" DEFAULT '#10b981'::"text" NOT NULL,
+    "auction_order" integer,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+ALTER TABLE "public"."teams" OWNER TO "postgres";
+
+ALTER TABLE ONLY "public"."auction_log"
+    ADD CONSTRAINT "auction_log_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."auction_lots"
+    ADD CONSTRAINT "auction_lots_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."auction_snapshots"
+    ADD CONSTRAINT "auction_snapshots_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."auctions"
+    ADD CONSTRAINT "auctions_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."bids"
+    ADD CONSTRAINT "bids_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."chat_kicks"
+    ADD CONSTRAINT "chat_kicks_guest_name_key" UNIQUE ("guest_name");
+
+ALTER TABLE ONLY "public"."chat_kicks"
+    ADD CONSTRAINT "chat_kicks_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."chat_messages"
+    ADD CONSTRAINT "chat_messages_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."gameweek_points"
+    ADD CONSTRAINT "gameweek_points_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."players"
+    ADD CONSTRAINT "players_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_username_key" UNIQUE ("username");
+
+ALTER TABLE ONLY "public"."roster_entries"
+    ADD CONSTRAINT "roster_entries_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."team_drops"
+    ADD CONSTRAINT "team_drops_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."team_transfer_records"
+    ADD CONSTRAINT "team_transfer_records_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."teams"
+    ADD CONSTRAINT "teams_pkey" PRIMARY KEY ("id");
+
+ALTER TABLE ONLY "public"."roster_entries"
+    ADD CONSTRAINT "unique_active_player_per_team" UNIQUE ("player_id", "team_id");
+
+ALTER TABLE ONLY "public"."auction_snapshots"
+    ADD CONSTRAINT "unique_auction_snapshot" UNIQUE ("auction_id");
+
+ALTER TABLE ONLY "public"."bids"
+    ADD CONSTRAINT "unique_bid_per_team_per_lot" UNIQUE ("lot_id", "team_id");
+
+ALTER TABLE ONLY "public"."team_drops"
+    ADD CONSTRAINT "unique_drop_per_player_per_auction" UNIQUE ("player_id", "auction_id");
+
+ALTER TABLE ONLY "public"."team_transfer_records"
+    ADD CONSTRAINT "unique_team_auction" UNIQUE ("team_id", "auction_id");
+
+CREATE INDEX "chat_messages_auction_id_created_at_idx" ON "public"."chat_messages" USING "btree" ("auction_id", "created_at");
+
+CREATE INDEX "chat_messages_created_at_idx" ON "public"."chat_messages" USING "btree" ("created_at") WHERE ("auction_id" IS NULL);
+
+CREATE UNIQUE INDEX "unique_player_team_gw" ON "public"."gameweek_points" USING "btree" ("team_id", "gameweek", "player_id") WHERE ("player_id" IS NOT NULL);
+
+ALTER TABLE ONLY "public"."auction_log"
+    ADD CONSTRAINT "auction_log_auction_id_fkey" FOREIGN KEY ("auction_id") REFERENCES "public"."auctions"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."auction_lots"
+    ADD CONSTRAINT "auction_lots_auction_id_fkey" FOREIGN KEY ("auction_id") REFERENCES "public"."auctions"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."auction_lots"
+    ADD CONSTRAINT "auction_lots_current_bidder_id_fkey" FOREIGN KEY ("current_bidder_id") REFERENCES "public"."teams"("id");
+
+ALTER TABLE ONLY "public"."auction_lots"
+    ADD CONSTRAINT "auction_lots_current_turn_team_id_fkey" FOREIGN KEY ("current_turn_team_id") REFERENCES "public"."teams"("id");
+
+ALTER TABLE ONLY "public"."auction_lots"
+    ADD CONSTRAINT "auction_lots_player_id_fkey" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id");
+
+ALTER TABLE ONLY "public"."auction_lots"
+    ADD CONSTRAINT "auction_lots_winning_team_id_fkey" FOREIGN KEY ("winning_team_id") REFERENCES "public"."teams"("id");
+
+ALTER TABLE ONLY "public"."auction_snapshots"
+    ADD CONSTRAINT "auction_snapshots_auction_id_fkey" FOREIGN KEY ("auction_id") REFERENCES "public"."auctions"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."bids"
+    ADD CONSTRAINT "bids_lot_id_fkey" FOREIGN KEY ("lot_id") REFERENCES "public"."auction_lots"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."bids"
+    ADD CONSTRAINT "bids_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id");
+
+ALTER TABLE ONLY "public"."chat_messages"
+    ADD CONSTRAINT "chat_messages_auction_id_fkey" FOREIGN KEY ("auction_id") REFERENCES "public"."auctions"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."chat_messages"
+    ADD CONSTRAINT "chat_messages_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."gameweek_points"
+    ADD CONSTRAINT "gameweek_points_player_id_fkey" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id");
+
+ALTER TABLE ONLY "public"."gameweek_points"
+    ADD CONSTRAINT "gameweek_points_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id");
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE SET NULL;
+
+ALTER TABLE ONLY "public"."roster_entries"
+    ADD CONSTRAINT "roster_entries_player_id_fkey" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id");
+
+ALTER TABLE ONLY "public"."roster_entries"
+    ADD CONSTRAINT "roster_entries_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE CASCADE;
+
+ALTER TABLE ONLY "public"."team_drops"
+    ADD CONSTRAINT "team_drops_auction_id_fkey" FOREIGN KEY ("auction_id") REFERENCES "public"."auctions"("id");
+
+ALTER TABLE ONLY "public"."team_drops"
+    ADD CONSTRAINT "team_drops_player_id_fkey" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id");
+
+ALTER TABLE ONLY "public"."team_drops"
+    ADD CONSTRAINT "team_drops_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id");
+
+ALTER TABLE ONLY "public"."team_transfer_records"
+    ADD CONSTRAINT "team_transfer_records_auction_id_fkey" FOREIGN KEY ("auction_id") REFERENCES "public"."auctions"("id");
+
+ALTER TABLE ONLY "public"."team_transfer_records"
+    ADD CONSTRAINT "team_transfer_records_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id");
+
+CREATE POLICY "AM read snapshots" ON "public"."auction_snapshots" FOR SELECT TO "authenticated" USING (("public"."get_my_role"() = ANY (ARRAY['admin'::"text", 'auction_master'::"text"])));
+
+CREATE POLICY "AM write auctions" ON "public"."auctions" TO "authenticated" USING (("public"."get_my_role"() = ANY (ARRAY['admin'::"text", 'auction_master'::"text"])));
+
+CREATE POLICY "AM write drops lock" ON "public"."team_drops" FOR UPDATE TO "authenticated" USING (("public"."get_my_role"() = ANY (ARRAY['admin'::"text", 'auction_master'::"text"])));
+
+CREATE POLICY "AM write gw points" ON "public"."gameweek_points" TO "authenticated" USING (("public"."get_my_role"() = ANY (ARRAY['admin'::"text", 'auction_master'::"text"])));
+
+CREATE POLICY "AM write log" ON "public"."auction_log" TO "authenticated" USING (("public"."get_my_role"() = ANY (ARRAY['admin'::"text", 'auction_master'::"text"])));
+
+CREATE POLICY "AM write lots" ON "public"."auction_lots" TO "authenticated" USING (("public"."get_my_role"() = ANY (ARRAY['admin'::"text", 'auction_master'::"text"])));
+
+CREATE POLICY "AM write transfers" ON "public"."team_transfer_records" TO "authenticated" USING (("public"."get_my_role"() = ANY (ARRAY['admin'::"text", 'auction_master'::"text"])));
+
+CREATE POLICY "Admin full access snapshots" ON "public"."auction_snapshots" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write auctions" ON "public"."auctions" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write bids" ON "public"."bids" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write drops" ON "public"."team_drops" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write gw points" ON "public"."gameweek_points" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write log" ON "public"."auction_log" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write lots" ON "public"."auction_lots" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write players" ON "public"."players" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write profiles" ON "public"."profiles" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write roster" ON "public"."roster_entries" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write teams" ON "public"."teams" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Admin full write transfers" ON "public"."team_transfer_records" TO "authenticated" USING (("public"."get_my_role"() = 'admin'::"text"));
+
+CREATE POLICY "Anyone can read auctions" ON "public"."auctions" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read bids" ON "public"."bids" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read chat" ON "public"."chat_messages" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read drops" ON "public"."team_drops" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read gw points" ON "public"."gameweek_points" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read kicks" ON "public"."chat_kicks" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read log" ON "public"."auction_log" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read lots" ON "public"."auction_lots" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read players" ON "public"."players" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read profiles" ON "public"."profiles" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read roster" ON "public"."roster_entries" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read teams" ON "public"."teams" FOR SELECT USING (true);
+
+CREATE POLICY "Anyone can read transfers" ON "public"."team_transfer_records" FOR SELECT USING (true);
+
+CREATE POLICY "Authenticated users can delete own messages" ON "public"."chat_messages" FOR DELETE USING (("auth"."uid"() = "user_id"));
+
+CREATE POLICY "Service role syncs players" ON "public"."players" TO "service_role" USING (true);
+
+CREATE POLICY "Team stages own drops" ON "public"."team_drops" FOR INSERT TO "authenticated" WITH CHECK ((("team_id" = "public"."get_my_team_id"()) AND ("status" = 'staged'::"text")));
+
+CREATE POLICY "Team updates own bids" ON "public"."bids" FOR UPDATE TO "authenticated" USING (("team_id" = "public"."get_my_team_id"()));
+
+CREATE POLICY "Team updates own display_name" ON "public"."teams" FOR UPDATE TO "authenticated" USING (("id" = "public"."get_my_team_id"())) WITH CHECK (("id" = "public"."get_my_team_id"()));
+
+CREATE POLICY "Team updates own staged drops" ON "public"."team_drops" FOR UPDATE TO "authenticated" USING ((("team_id" = "public"."get_my_team_id"()) AND ("status" = 'staged'::"text")));
+
+CREATE POLICY "Team writes own bids" ON "public"."bids" FOR INSERT TO "authenticated" WITH CHECK (("team_id" = "public"."get_my_team_id"()));
+
+CREATE POLICY "Team writes own roster" ON "public"."roster_entries" TO "authenticated" USING (("team_id" = "public"."get_my_team_id"()));
+
+CREATE POLICY "User updates own profile" ON "public"."profiles" FOR UPDATE TO "authenticated" USING (("id" = "auth"."uid"()));
+
+ALTER TABLE "public"."auction_log" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."auction_lots" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."auction_snapshots" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."auctions" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."bids" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."chat_kicks" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."chat_messages" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."gameweek_points" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."players" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."roster_entries" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."team_drops" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."team_transfer_records" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "public"."teams" ENABLE ROW LEVEL SECURITY;
+
+ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
+
+
+-- =============================================
+-- REALTIME PUBLICATIONS
+-- =============================================
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."auction_log";
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."auction_lots";
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."bids";
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_kicks";
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_messages";
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."roster_entries";
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."teams";
+
+
+-- =============================================
+-- ROLE PRIVILEGES & GRANTS
+-- =============================================
+GRANT USAGE ON SCHEMA "public" TO "postgres";
+GRANT USAGE ON SCHEMA "public" TO "anon";
+GRANT USAGE ON SCHEMA "public" TO "authenticated";
+GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."auction_log" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."auction_log" TO "authenticated";
+GRANT ALL ON TABLE "public"."auction_log" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."auction_lots" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."auction_lots" TO "authenticated";
+GRANT ALL ON TABLE "public"."auction_lots" TO "service_role";
+
+GRANT ALL ON TABLE "public"."auction_snapshots" TO "anon";
+GRANT ALL ON TABLE "public"."auction_snapshots" TO "authenticated";
+GRANT ALL ON TABLE "public"."auction_snapshots" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."auctions" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."auctions" TO "authenticated";
+GRANT ALL ON TABLE "public"."auctions" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."bids" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."bids" TO "authenticated";
+GRANT ALL ON TABLE "public"."bids" TO "service_role";
+
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_kicks" TO "anon";
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_kicks" TO "authenticated";
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_kicks" TO "service_role";
+
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_messages" TO "anon";
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_messages" TO "authenticated";
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_messages" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."gameweek_points" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."gameweek_points" TO "authenticated";
+GRANT ALL ON TABLE "public"."gameweek_points" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."players" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."players" TO "authenticated";
+GRANT ALL ON TABLE "public"."players" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."profiles" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."profiles" TO "authenticated";
+GRANT ALL ON TABLE "public"."profiles" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."roster_entries" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."roster_entries" TO "authenticated";
+GRANT ALL ON TABLE "public"."roster_entries" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."team_drops" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."team_drops" TO "authenticated";
+GRANT ALL ON TABLE "public"."team_drops" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."team_transfer_records" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."team_transfer_records" TO "authenticated";
+GRANT ALL ON TABLE "public"."team_transfer_records" TO "service_role";
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."teams" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."teams" TO "authenticated";
+GRANT ALL ON TABLE "public"."teams" TO "service_role";
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLES TO "service_role";
+
+-- ── Club cap trigger ─────────────────────────────────────────────────────────
+-- Backstop: blocks any insert into roster_entries that would give a team
+-- more than 3 players from the same FPL club (slot_type starting or bench).
+
+CREATE OR REPLACE FUNCTION "public"."check_club_cap"()
+RETURNS trigger AS $$
+DECLARE
+  club_name text;
+  club_count integer;
+BEGIN
+  SELECT fpl_team INTO club_name FROM public.players WHERE id = NEW.player_id;
+
+  IF NEW.slot_type IN ('starting', 'bench') THEN
+    SELECT COUNT(*) INTO club_count
+    FROM public.roster_entries re
+    JOIN public.players p ON p.id = re.player_id
+    WHERE re.team_id = NEW.team_id
+      AND re.slot_type IN ('starting', 'bench')
+      AND p.fpl_team = club_name;
+
+    IF club_count >= 3 THEN
+      RAISE EXCEPTION 'Club cap exceeded: team already has 3 players from %', club_name;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "enforce_club_cap"
+  BEFORE INSERT ON "public"."roster_entries"
+  FOR EACH ROW EXECUTE FUNCTION "public"."check_club_cap"();
+
+GRANT EXECUTE ON FUNCTION "public"."check_club_cap"() TO "authenticated", "anon", "service_role";
+

@@ -72,7 +72,7 @@ function TeamBidRow({
 // ── My action panel ───────────────────────────────────────────────────────────
 
 function MyBidPanel({
-  myTeam, myBid, currentBid, basePrice, myFilledSlots, lotId, phase, isMyTurn, currentBidderId, myTeamId, onAction,
+  myTeam, myBid, currentBid, basePrice, myFilledSlots, lotId, phase, isMyTurn, currentBidderId, myTeamId, isClubCapped, clubName, onAction,
 }: {
   myTeam: LeagueTeam
   myBid: Bid | undefined
@@ -84,6 +84,8 @@ function MyBidPanel({
   isMyTurn: boolean
   currentBidderId: string | null
   myTeamId: string
+  isClubCapped: boolean
+  clubName: string
   onAction: () => Promise<void>
 }) {
   const [bidAmount, setBidAmount] = useState("")
@@ -115,7 +117,7 @@ function MyBidPanel({
           <Button
             className={cn("flex-1", myInterest === true && "border-emerald-500 text-emerald-500")}
             variant={myInterest === true ? "outline" : "default"}
-            disabled={loading}
+            disabled={loading || isClubCapped}
             onClick={() => post("declare-interest", { lot_id: lotId, is_interested: true })}
           >
             {myInterest === true ? "✓ Interested" : "I'm Interested"}
@@ -129,6 +131,9 @@ function MyBidPanel({
             Pass
           </Button>
         </div>
+        {isClubCapped && (
+          <p className="text-xs text-destructive">Max {SQUAD_RULES.max_per_club} players from {clubName} reached</p>
+        )}
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
     )
@@ -219,7 +224,7 @@ function MyBidPanel({
 // ── MyActionPanel — exported separately so the page can place it at the top ──
 
 export function MyActionPanel() {
-  const { currentLot, bids, teams, myTeamId, myRole, refresh, filledSlotsByTeam } = useAuction()
+  const { currentLot, bids, teams, myTeamId, myRole, refresh, filledSlotsByTeam, myClubCounts } = useAuction()
 
   if (myRole !== "team" || !myTeamId) return null
   if (!currentLot || currentLot.phase === "concluded" || currentLot.phase === "pending") return null
@@ -229,6 +234,7 @@ export function MyActionPanel() {
   const myTeam = teams.find(t => t.id === myTeamId)
   const myBid = bids.find(b => b.team_id === myTeamId)
   const isMyTurn = current_turn_team_id === myTeamId
+  const isClubCapped = (myClubCounts[player.fpl_team] ?? 0) >= SQUAD_RULES.max_per_club
 
   if (!myTeam) return null
 
@@ -244,6 +250,8 @@ export function MyActionPanel() {
       isMyTurn={isMyTurn}
       currentBidderId={current_bidder_id ?? null}
       myTeamId={myTeamId}
+      isClubCapped={isClubCapped}
+      clubName={player.fpl_team}
       onAction={refresh}
     />
   )

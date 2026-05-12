@@ -33,6 +33,7 @@ export interface AuctionContextValue {
   teams: LeagueTeam[]
   availablePlayers: Player[]
   filledSlotsByTeam: Record<string, Record<Position, number>>
+  myClubCounts: Record<string, number>
   myTeamId: string | null
   myRole: Role
   isLoading: boolean
@@ -88,6 +89,7 @@ export function AuctionProvider({
   const [teams, setTeams] = useState<LeagueTeam[]>(initialTeams)
   const [availablePlayers, setAvailablePlayers] = useState<Player[]>(initialAvailablePlayers)
   const [filledSlotsByTeam, setFilledSlotsByTeam] = useState<Record<string, Record<Position, number>>>(initialFilledSlotsByTeam)
+  const [myClubCounts, setMyClubCounts] = useState<Record<string, number>>({})
   const [isLoading, setIsLoading] = useState(false)
 
   // ── Full refresh from DB ──────────────────────────────────────────────────
@@ -104,21 +106,26 @@ export function AuctionProvider({
         supabase.from("auctions").select("*").in("status", ["pending", "active"]).maybeSingle(),
         supabase.from("teams").select("*").order("auction_order"),
         supabase.from("roster_entries").select("player_id").in("slot_type", ["starting", "bench"]),
-        supabase.from("roster_entries").select("team_id, player:players(position)").in("slot_type", ["starting", "bench"]),
+        supabase.from("roster_entries").select("team_id, player:players(position, fpl_team)").in("slot_type", ["starting", "bench"]),
       ])
 
       const freshTeams = (teamsData ?? []) as LeagueTeam[]
       setAuction(auctionData ?? null)
       setTeams(freshTeams)
 
-      // Recompute filled slots per team per position
+      // Recompute filled slots per team per position, and club counts for my team
       const filled: Record<string, Record<Position, number>> = {}
       for (const t of freshTeams) filled[t.id] = { GK: 0, DEF: 0, MID: 0, FWD: 0 }
+      const clubCounts: Record<string, number> = {}
       for (const row of rosterRows ?? []) {
-        const pos = (row.player as unknown as { position: Position } | null)?.position
-        if (pos && filled[row.team_id]) filled[row.team_id][pos]++
+        const p = (row.player as unknown as { position: Position; fpl_team: string } | null)
+        if (p?.position && filled[row.team_id]) filled[row.team_id][p.position]++
+        if (row.team_id === myTeamId && p?.fpl_team) {
+          clubCounts[p.fpl_team] = (clubCounts[p.fpl_team] ?? 0) + 1
+        }
       }
       setFilledSlotsByTeam(filled)
+      setMyClubCounts(clubCounts)
 
       // Rebuild available player pool
       const draftedIds = (draftedRows ?? []).map(r => r.player_id) as number[]
@@ -241,7 +248,7 @@ export function AuctionProvider({
 
   return (
     <AuctionContext.Provider
-      value={{ auction, currentLot, lastConcludedLot, bids, log, teams, availablePlayers, filledSlotsByTeam, myTeamId, myRole, isLoading, refresh }}
+      value={{ auction, currentLot, lastConcludedLot, bids, log, teams, availablePlayers, filledSlotsByTeam, myClubCounts, myTeamId, myRole, isLoading, refresh }}
     >
       {children}
     </AuctionContext.Provider>

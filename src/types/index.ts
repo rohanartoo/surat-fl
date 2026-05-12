@@ -21,6 +21,8 @@ export const SQUAD_RULES = {
   max_starting: { GK: 1, DEF: 5, MID: 5, FWD: 3 } as Record<Position, number>,
   /** Minimum base price for any player */
   min_bid: 1,
+  /** Maximum players from the same FPL club per team */
+  max_per_club: 3,
 } as const
 
 export const BID_RULES = {
