@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
-import { requireRole } from "@/lib/roles"
+import { requireRole, getProfile } from "@/lib/roles"
 import type { Role } from "@/types"
 
 const EMAIL_DOMAIN = "surat-fl.internal"
@@ -42,6 +42,10 @@ export async function POST(request: NextRequest) {
   const validRoles: Role[] = ["admin", "auction_master", "team", "guest"]
   if (!validRoles.includes(role)) {
     return NextResponse.json({ error: "Invalid role." }, { status: 400 })
+  }
+  const callerProfile = await getProfile()
+  if (role === "admin" && callerProfile?.role !== "admin") {
+    return NextResponse.json({ error: "Only admins can create admin accounts." }, { status: 403 })
   }
   if (!display_name || typeof display_name !== "string" || display_name.trim().length < 1) {
     return NextResponse.json({ error: "Display name is required." }, { status: 400 })

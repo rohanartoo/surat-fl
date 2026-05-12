@@ -499,7 +499,8 @@ CREATE POLICY "Team writes own bids" ON "public"."bids" FOR INSERT TO "authentic
 
 CREATE POLICY "Team writes own roster" ON "public"."roster_entries" TO "authenticated" USING (("team_id" = "public"."get_my_team_id"()));
 
-CREATE POLICY "User updates own profile" ON "public"."profiles" FOR UPDATE TO "authenticated" USING (("id" = "auth"."uid"()));
+-- Intentionally removed: client-side UPDATE policy was too broad (allowed updating role/team_id).
+-- All profile mutations go through server-side API routes using the service-role client.
 
 ALTER TABLE "public"."auction_log" ENABLE ROW LEVEL SECURITY;
 
@@ -657,4 +658,27 @@ CREATE TRIGGER "enforce_club_cap"
   FOR EACH ROW EXECUTE FUNCTION "public"."check_club_cap"();
 
 GRANT EXECUTE ON FUNCTION "public"."check_club_cap"() TO "authenticated", "anon", "service_role";
+
+-- ── Profile field protection trigger ────────────────────────────────────────
+-- Backstop: blocks any UPDATE that attempts to change role or team_id on profiles,
+-- regardless of how the request is made. Defense-in-depth alongside the dropped RLS policy.
+
+CREATE OR REPLACE FUNCTION "public"."protect_profile_fields"()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.role IS DISTINCT FROM OLD.role THEN
+    RAISE EXCEPTION 'You cannot change your own role.';
+  END IF;
+  IF NEW.team_id IS DISTINCT FROM OLD.team_id THEN
+    RAISE EXCEPTION 'You cannot change your own team assignment.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "enforce_profile_security"
+  BEFORE UPDATE ON "public"."profiles"
+  FOR EACH ROW EXECUTE FUNCTION "public"."protect_profile_fields"();
+
+GRANT EXECUTE ON FUNCTION "public"."protect_profile_fields"() TO "authenticated", "anon", "service_role";
 

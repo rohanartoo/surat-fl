@@ -59,12 +59,16 @@ export async function POST(request: NextRequest) {
 
   const trimmedName = guest_name.trim()
 
-  // Check against team names (case-insensitive)
+  // Check against team names — case-insensitive + Unicode normalisation to block homograph spoofing
+  const normalizeStr = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
   const { data: teams } = await supabase.from("teams").select("short_name, display_name")
   const reserved = new Set(
-    (teams ?? []).flatMap(t => [t.short_name?.toLowerCase(), t.display_name?.toLowerCase()]).filter(Boolean)
+    (teams ?? [])
+      .flatMap(t => [t.short_name, t.display_name])
+      .filter(Boolean)
+      .map(n => normalizeStr(n!))
   )
-  if (reserved.has(trimmedName.toLowerCase())) {
+  if (reserved.has(normalizeStr(trimmedName))) {
     return NextResponse.json({ error: "That name is reserved for a league team. Please choose a different name." }, { status: 400 })
   }
 

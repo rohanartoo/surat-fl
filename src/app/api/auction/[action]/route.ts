@@ -105,7 +105,7 @@ async function handleSetOrder(request: NextRequest) {
   const { data: auction } = await supabase
     .from("auctions").select("status").eq("id", auction_id).single()
   if (!auction) return err("Auction not found.", 404)
-  if (auction.status === "completed") return err("Cannot reorder a completed auction.")
+  if (auction.status !== "pending") return err("Auction order can only be set before the auction starts.")
 
   const { data: validTeams } = await supabase.from("teams").select("id")
   const validIds = new Set((validTeams ?? []).map((t: { id: string }) => t.id))
@@ -117,7 +117,12 @@ async function handleSetOrder(request: NextRequest) {
     .eq("id", auction_id)
 
   if (error) return err(error.message)
-  return NextResponse.json({ success: true })
+
+  const omittedCount = (validTeams?.length ?? 0) - order.length
+  return NextResponse.json({
+    success: true,
+    ...(omittedCount > 0 && { warning: `${omittedCount} team(s) not included in this auction order.` }),
+  })
 }
 
 // ─────────────────────────────────────────────
@@ -253,8 +258,33 @@ async function handleOpenLot(request: NextRequest) {
     }
 
     const maxSlots = SQUAD_RULES.slots[position as Position]
+
+    // Filter out teams banned from re-drafting this player
+    const { data: redraftBans } = await supabase
+      .from("team_drops")
+      .select("team_id, dropped_post_january, dropped_post_summer")
+      .eq("player_id", player_id)
+      .in("status", ["locked"])
+
+    const { data: postWindowAuction } = await supabase
+      .from("auctions")
+      .select("id")
+      .in("type", ["post_jan", "post_summer"])
+      .in("status", ["active", "completed"])
+      .limit(1)
+      .maybeSingle()
+
+    const bannedTeamIds = new Set(
+      (redraftBans ?? [])
+        .filter(d => d.dropped_post_summer || d.dropped_post_january || !postWindowAuction)
+        .map(d => d.team_id)
+    )
+
     const eligibleTeamIds = allTeamIds.filter(
-      id => (filledByTeam[id] ?? 0) < maxSlots && (clubCountByTeam[id] ?? 0) < SQUAD_RULES.max_per_club
+      id =>
+        (filledByTeam[id] ?? 0) < maxSlots &&
+        (clubCountByTeam[id] ?? 0) < SQUAD_RULES.max_per_club &&
+        !bannedTeamIds.has(id)
     )
 
     if (eligibleTeamIds.length === 0) {
@@ -342,7 +372,7 @@ async function handleDeclareInterest(request: NextRequest) {
   if (lot.phase !== "interest") return err("Lot is not in interest phase.")
 
   // Timer enforcement: block new interest declarations once the window has closed
-  if (is_interested && lot.timer_started_at) {
+  if (lot.timer_started_at) {
     const elapsed = (Date.now() - new Date(lot.timer_started_at).getTime()) / 1000
     if (elapsed > AUCTION_TIMER_SECONDS) {
       return err("The interest window has closed. The auction master can reset the timer if needed.")
@@ -519,7 +549,7 @@ async function handlePlaceBid(request: NextRequest) {
   if (!profile?.team_id) return err("Not a team account.", 403)
 
   const { lot_id, amount } = await request.json()
-  if (!lot_id || typeof amount !== "number") return err("lot_id and amount required.")
+  if (!lot_id || typeof amount !== "number" || !Number.isFinite(amount)) return err("lot_id and amount required.")
 
   const { data: lot } = await supabase
     .from("auction_lots")
