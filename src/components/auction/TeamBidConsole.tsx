@@ -260,7 +260,7 @@ export function MyActionPanel() {
 // ── Main bid status panel (team rows) ─────────────────────────────────────────
 
 export function TeamBidConsole() {
-  const { currentLot, bids, teams, myTeamId, myRole, filledSlotsByTeam } = useAuction()
+  const { currentLot, bids, teams, myTeamId, myRole, filledSlotsByTeam, auction } = useAuction()
 
   if (!currentLot || currentLot.phase === "concluded" || currentLot.phase === "pending") {
     return (
@@ -277,6 +277,12 @@ export function TeamBidConsole() {
   const turnTeam = current_turn_team_id ? teams.find(t => t.id === current_turn_team_id) : null
   const isMyTurn = current_turn_team_id === myTeamId
 
+  // Only show teams participating in this auction
+  const auctionOrder = (auction?.auction_order as string[] | null) ?? null
+  const participatingTeams = auctionOrder
+    ? teams.filter(t => auctionOrder.includes(t.id)).sort((a, b) => auctionOrder.indexOf(a.id) - auctionOrder.indexOf(b.id))
+    : teams
+
   return (
     <Card className="border-border/60">
       <CardHeader className="pb-2">
@@ -290,7 +296,7 @@ export function TeamBidConsole() {
         </div>
       </CardHeader>
       <CardContent className="space-y-1 px-3 pb-3">
-        {teams.map(team => {
+        {participatingTeams.map(team => {
           const bid = bids.find(b => b.team_id === team.id)
           const filled = filledSlotsByTeam[team.id]?.[position] ?? 0
           return (
