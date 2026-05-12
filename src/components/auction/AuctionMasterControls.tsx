@@ -223,8 +223,12 @@ export function AuctionMasterControls() {
 
     async function saveOrder() {
       if (!localOrder) return
-      await post("set-order", { auction_id: auction!.id, order: localOrder })
-      setLocalOrder(null)
+      const ok = await post("set-order", { auction_id: auction!.id, order: localOrder })
+      if (ok) {
+        setLocalOrder(null)
+        setExcludedTeamIds([])
+        await refresh()
+      }
     }
 
     const excludedTeams = excludedTeamIds.map(id => teams.find(t => t.id === id)).filter(Boolean) as typeof teams
