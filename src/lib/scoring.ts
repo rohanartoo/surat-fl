@@ -24,7 +24,7 @@ interface RosterEntry {
  * priority order (1→4), subbing in the first one who played AND keeps the
  * formation valid.
  */
-function applyAutoSubs(
+export function applyAutoSubs(
   starting: RosterEntry[],
   bench: RosterEntry[],
   liveStats: Record<number, FplLiveStats>,
