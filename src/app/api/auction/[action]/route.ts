@@ -36,6 +36,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       case "assign-player":    return handleAssignPlayer(request)
       case "undo-bid":         return handleUndoBid(request)
       case "reset-timer":      return handleResetTimer(request)
+      case "return-to-pool":   return handleReturnToPool(request)
       case "cancel":           return handleCancel(request)
       case "end-draft":        return handleEndDraft(request)
       default:
@@ -411,22 +412,33 @@ async function handleDeclareInterest(request: NextRequest) {
     }
   }
 
-  // Club cap: max 3 players from the same FPL club
+  // Position cap + club cap (single player fetch covers both)
   if (is_interested) {
     const { data: lotPlayer } = await supabase
-      .from("players").select("fpl_team").eq("id", lot.player_id).single()
+      .from("players").select("fpl_team, position").eq("id", lot.player_id).single()
 
+    const { data: myRoster } = await supabase
+      .from("roster_entries")
+      .select("player:players(fpl_team, position)")
+      .eq("team_id", profile.team_id)
+      .in("slot_type", ["starting", "bench"])
+
+    // Position cap
+    if (lotPlayer?.position) {
+      const posCount = (myRoster ?? []).filter(
+        (r) => (r.player as unknown as { position: string } | null)?.position === lotPlayer.position
+      ).length
+      const maxForPos = SQUAD_RULES.slots[lotPlayer.position as Position]
+      if (posCount >= maxForPos) {
+        return err(`Your ${lotPlayer.position} slots are full (${maxForPos}/${maxForPos}).`)
+      }
+    }
+
+    // Club cap
     if (lotPlayer?.fpl_team) {
-      const { data: clubRoster } = await supabase
-        .from("roster_entries")
-        .select("player:players(fpl_team)")
-        .eq("team_id", profile.team_id)
-        .in("slot_type", ["starting", "bench"])
-
-      const clubCount = (clubRoster ?? []).filter(
+      const clubCount = (myRoster ?? []).filter(
         (r) => (r.player as unknown as { fpl_team: string } | null)?.fpl_team === lotPlayer.fpl_team
       ).length
-
       if (clubCount >= SQUAD_RULES.max_per_club) {
         return err(`You already have ${SQUAD_RULES.max_per_club} players from ${lotPlayer.fpl_team}. Club cap reached.`)
       }
@@ -1013,6 +1025,41 @@ export async function restoreFromSnapshot(auction_id: string, supabase: ReturnTy
   }
 
   return { restored: true as const }
+}
+
+// ─────────────────────────────────────────────
+// RETURN-TO-POOL — AM closes an open lot with no winner
+// Works for both interest and bidding phases (covers initial auction lots)
+// Body: { lot_id: string }
+// ─────────────────────────────────────────────
+async function handleReturnToPool(request: NextRequest) {
+  await requireRole("auction_master")
+  const supabase = createClient()
+  const { lot_id } = await request.json()
+  if (!lot_id) return err("lot_id required.")
+
+  const { data: lot } = await supabase
+    .from("auction_lots")
+    .select("phase, auction_id, player_id")
+    .eq("id", lot_id).single()
+  if (!lot) return err("Lot not found.", 404)
+  if (!["interest", "bidding"].includes(lot.phase)) {
+    return err("Lot is not open.")
+  }
+
+  const { error: lotErr } = await supabase
+    .from("auction_lots")
+    .update({ phase: "concluded", current_turn_team_id: null })
+    .eq("id", lot_id)
+  if (lotErr) return err(lotErr.message)
+
+  await supabase.from("auction_log").insert({
+    auction_id: lot.auction_id,
+    action_type: "lot_returned_to_pool",
+    payload: { lot_id, player_id: lot.player_id },
+  })
+
+  return NextResponse.json({ success: true })
 }
 
 // ─────────────────────────────────────────────

@@ -472,6 +472,16 @@ export function AuctionMasterControls() {
             Assign {pendingWinner.short_name} — {formatMoney(assignPrice)}
           </Button>
         )}
+
+        <Button
+          size="sm"
+          variant="outline"
+          className="w-full text-xs text-muted-foreground hover:text-destructive hover:border-destructive/50"
+          disabled={loading}
+          onClick={() => post("return-to-pool", { lot_id: lotId })}
+        >
+          Return to pool
+        </Button>
       </div>
 
       {error && <p className="text-xs text-destructive mt-2">{error}</p>}

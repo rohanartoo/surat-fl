@@ -72,7 +72,7 @@ function TeamBidRow({
 // ── My action panel ───────────────────────────────────────────────────────────
 
 function MyBidPanel({
-  myTeam, myBid, currentBid, basePrice, myFilledSlots, lotId, phase, isMyTurn, currentBidderId, myTeamId, isClubCapped, clubName, onAction,
+  myTeam, myBid, currentBid, basePrice, myFilledSlots, lotId, phase, isMyTurn, currentBidderId, myTeamId, isClubCapped, clubName, isPositionFull, onAction,
 }: {
   myTeam: LeagueTeam
   myBid: Bid | undefined
@@ -86,6 +86,7 @@ function MyBidPanel({
   myTeamId: string
   isClubCapped: boolean
   clubName: string
+  isPositionFull: boolean
   onAction: () => Promise<void>
 }) {
   const [bidAmount, setBidAmount] = useState("")
@@ -117,7 +118,7 @@ function MyBidPanel({
           <Button
             className={cn("flex-1", myInterest === true && "border-emerald-500 text-emerald-500")}
             variant={myInterest === true ? "outline" : "default"}
-            disabled={loading || isClubCapped}
+            disabled={loading || isClubCapped || isPositionFull}
             onClick={() => post("declare-interest", { lot_id: lotId, is_interested: true })}
           >
             {myInterest === true ? "✓ Interested" : "I'm Interested"}
@@ -131,7 +132,10 @@ function MyBidPanel({
             Pass
           </Button>
         </div>
-        {isClubCapped && (
+        {isPositionFull && (
+          <p className="text-xs text-destructive">Your position slots are full</p>
+        )}
+        {!isPositionFull && isClubCapped && (
           <p className="text-xs text-destructive">Max {SQUAD_RULES.max_per_club} players from {clubName} reached</p>
         )}
         {error && <p className="text-xs text-destructive">{error}</p>}
@@ -235,6 +239,7 @@ export function MyActionPanel() {
   const myBid = bids.find(b => b.team_id === myTeamId)
   const isMyTurn = current_turn_team_id === myTeamId
   const isClubCapped = (myClubCounts[player.fpl_team] ?? 0) >= SQUAD_RULES.max_per_club
+  const isPositionFull = (filledSlotsByTeam[myTeamId]?.[position] ?? 0) >= SQUAD_RULES.slots[position]
 
   if (!myTeam) return null
 
@@ -252,6 +257,7 @@ export function MyActionPanel() {
       myTeamId={myTeamId}
       isClubCapped={isClubCapped}
       clubName={player.fpl_team}
+      isPositionFull={isPositionFull}
       onAction={refresh}
     />
   )
