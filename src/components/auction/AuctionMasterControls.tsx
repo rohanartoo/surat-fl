@@ -374,6 +374,10 @@ export function AuctionMasterControls() {
               Advance to {nextPos}
             </Button>
           </div>
+        ) : allParticipantsFull && !nextPos ? (
+          <p className="text-xs text-emerald-500 font-medium mb-3">
+            All squads complete — end the draft below.
+          </p>
         ) : (
           <p className="text-xs text-muted-foreground italic mb-3">
             Click "Nominate" on a player in the list to open a lot.
