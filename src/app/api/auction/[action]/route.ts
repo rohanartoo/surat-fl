@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
-import { validateBid, getNextBidder, getNextBidStartIndex, isSoloWin, chooseSlotType } from "@/lib/auction-engine"
+import { validateBid, getNextBidder, getNextBidStartIndex, isSoloWin, chooseSlotType, POSITION_ORDER } from "@/lib/auction-engine"
 import { lockAndCommitDrops } from "@/lib/drops"
 import type { Position } from "@/types"
 import { SQUAD_RULES, AUCTION_TIMER_SECONDS } from "@/types"
@@ -37,6 +37,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       case "undo-bid":         return handleUndoBid(request)
       case "reset-timer":      return handleResetTimer(request)
       case "return-to-pool":   return handleReturnToPool(request)
+      case "advance-position": return handleAdvancePosition(request)
       case "cancel":           return handleCancel(request)
       case "end-draft":        return handleEndDraft(request)
       default:
@@ -1060,6 +1061,49 @@ async function handleReturnToPool(request: NextRequest) {
   })
 
   return NextResponse.json({ success: true })
+}
+
+// ─────────────────────────────────────────────
+// ADVANCE-POSITION — AM moves to the next position category
+// Body: { auction_id: string }
+// ─────────────────────────────────────────────
+async function handleAdvancePosition(request: NextRequest) {
+  await requireRole("auction_master")
+  const supabase = createClient()
+  const { auction_id } = await request.json()
+  if (!auction_id) return err("auction_id required.")
+
+  const { data: auction } = await supabase
+    .from("auctions")
+    .select("status, current_position_category, auction_order")
+    .eq("id", auction_id).single()
+  if (!auction) return err("Auction not found.", 404)
+  if (auction.status !== "active") return err("Auction is not active.")
+
+  const { data: openLot } = await supabase
+    .from("auction_lots").select("id")
+    .eq("auction_id", auction_id)
+    .in("phase", ["interest", "bidding"])
+    .maybeSingle()
+  if (openLot) return err("Close the current lot before advancing position.")
+
+  const currentPos = auction.current_position_category as Position
+  const nextPos = POSITION_ORDER[POSITION_ORDER.indexOf(currentPos) + 1] ?? null
+  if (!nextPos) return err("Already at the final position (FWD). End the draft when ready.")
+
+  const { error } = await supabase
+    .from("auctions")
+    .update({ current_position_category: nextPos, current_bidder_index: 0 })
+    .eq("id", auction_id)
+  if (error) return err(error.message)
+
+  await supabase.from("auction_log").insert({
+    auction_id,
+    action_type: "position_advanced",
+    payload: { from: currentPos, to: nextPos },
+  })
+
+  return NextResponse.json({ success: true, next_position: nextPos })
 }
 
 // ─────────────────────────────────────────────

@@ -9,6 +9,9 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { roleIsAM } from "@/lib/role-utils"
 import { formatMoney } from "@/lib/utils"
+import { POSITION_ORDER } from "@/lib/auction-engine"
+import { SQUAD_RULES } from "@/types"
+import type { Position } from "@/types"
 
 export function AuctionMasterControls() {
   const { auction, currentLot, bids, teams, myRole, filledSlotsByTeam, refresh } = useAuction()
@@ -341,17 +344,41 @@ export function AuctionMasterControls() {
 
   // ── Auction active, no lot open ───────────────────────────────────────────
   if (auction.status === "active" && !currentLot) {
+    const currentPos = auction.current_position_category as Position
+    const nextPos = POSITION_ORDER[POSITION_ORDER.indexOf(currentPos) + 1] ?? null
+    const maxSlotsForPos = SQUAD_RULES.slots[currentPos]
+    const allParticipantsFull = participatingTeams.length > 0 && participatingTeams.every(
+      t => (filledSlotsByTeam[t.id]?.[currentPos] ?? 0) >= maxSlotsForPos
+    )
+
     return (
       <AMCard title="Auction Master" resetSection={resetSection}>
         <div className="space-y-1 mb-4 text-sm">
           <p className="text-muted-foreground">
             Position:{" "}
-            <span className="text-foreground font-medium">{auction.current_position_category}</span>
+            <span className="text-foreground font-medium">{currentPos}</span>
           </p>
         </div>
-        <p className="text-xs text-muted-foreground italic mb-3">
-          Click "Nominate" on a player in the list to open a lot.
-        </p>
+
+        {allParticipantsFull && nextPos ? (
+          <div className="rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2.5 space-y-2 mb-3">
+            <p className="text-xs text-emerald-500 font-medium">
+              All {currentPos} slots filled — ready to advance.
+            </p>
+            <Button
+              size="sm"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+              disabled={loading}
+              onClick={() => post("advance-position", { auction_id: auction.id })}
+            >
+              Advance to {nextPos}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground italic mb-3">
+            Click "Nominate" on a player in the list to open a lot.
+          </p>
+        )}
 
         {/* End Draft */}
         <div className="space-y-1.5">
