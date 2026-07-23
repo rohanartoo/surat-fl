@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { getProfile } from "@/lib/roles"
 import { syncGameweekPoints, applyDropPenalties } from "@/lib/scoring"
+import { fetchFplBootstrap } from "@/lib/fpl"
 import { verifySyncSecret } from "@/lib/auth"
 
 function createClient() {
@@ -29,9 +30,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "gameweek must be an integer between 1 and 38" }, { status: 400 })
     }
 
+    // Only the live gameweek is rebuilt from current squads. For any earlier
+    // gameweek, refresh points on the rows already recorded for it so that
+    // transfers and mid-season auctions cannot rewrite past results.
+    // Fails safe: if FPL reports no active gameweek (pre-season, between
+    // seasons, or a bootstrap hiccup) every gameweek counts as past, so a
+    // stray manual sync can never rebuild history from current squads.
+    const bootstrap = await fetchFplBootstrap()
+    const currentGw = bootstrap.events.find(e => e.is_current)?.id ?? null
+    const preserveRoster = currentGw === null || gameweek !== currentGw
+
     const supabase = createClient()
     const [pointsResult, penaltyResult] = await Promise.all([
-      syncGameweekPoints(gameweek, supabase),
+      syncGameweekPoints(gameweek, supabase, { preserveRoster }),
       applyDropPenalties(gameweek, supabase),
     ])
 

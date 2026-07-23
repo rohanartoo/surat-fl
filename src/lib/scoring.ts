@@ -72,8 +72,38 @@ export function applyAutoSubs(
 export async function syncGameweekPoints(
   gw: number,
   supabase: SupabaseClient,
-): Promise<{ synced: number; teams: number }> {
+  opts: { preserveRoster?: boolean } = {},
+): Promise<{ synced: number; teams: number; preservedRoster?: boolean }> {
   const liveStats = await fetchFplLive(gw)
+
+  // Re-scoring a finished gameweek: refresh the points on the rows already
+  // recorded for it instead of rebuilding from today's squads. Rosters change
+  // between gameweeks (transfers, mid-season auctions, players leaving the
+  // league), so rebuilding would retroactively credit a past gameweek to
+  // whoever holds the slot now. gameweek_points is the historical record of
+  // who actually played that week, so only `points` may move — which is what
+  // FPL bonus/appeal adjustments actually change.
+  if (opts.preserveRoster) {
+    const { data: existing } = await supabase
+      .from("gameweek_points")
+      .select("id, player_id")
+      .eq("gameweek", gw)
+      .not("player_id", "is", null)
+
+    if (!existing || existing.length === 0) {
+      return { synced: 0, teams: 0, preservedRoster: true }
+    }
+
+    let updated = 0
+    for (const row of existing as { id: string; player_id: number }[]) {
+      const points = liveStats[row.player_id]?.total_points ?? 0
+      const { error } = await supabase
+        .from("gameweek_points").update({ points }).eq("id", row.id)
+      if (error) throw new Error(`syncGameweekPoints update: ${error.message}`)
+      updated++
+    }
+    return { synced: updated, teams: 0, preservedRoster: true }
+  }
 
   const [{ data: teams }, { data: allRoster }] = await Promise.all([
     supabase.from("teams").select("id"),

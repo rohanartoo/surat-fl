@@ -59,7 +59,12 @@ export function mapFplPlayer(player: FplPlayer, teamMap: Record<number, { name: 
     yellow_cards: player.yellow_cards,
     red_cards: player.red_cards,
     minutes: player.minutes,
-    base_price: 1, // starts at £1m; updated when a player is won at auction
+    // base_price is deliberately NOT set here. This object is upserted on
+    // conflict, so including it would reset every player's auction-won price
+    // back to £1m on every FPL refresh — wiping the opening-bid floors that
+    // later auctions depend on. New rows get £1m from the column default;
+    // existing rows keep whatever the last auction set. Season rollover
+    // resets prices explicitly in /api/admin/reset.
     fpl_cost: player.now_cost / 10,
     status: player.status,
     news: player.news,
