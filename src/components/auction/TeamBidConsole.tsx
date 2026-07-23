@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { PositionBadge } from "@/components/ui/PositionBadge"
 import { formatMoney, cn } from "@/lib/utils"
-import { getMinNextBid, getMaxBid } from "@/lib/auction-engine"
+import { getMinNextBid, getMaxBid, POSITION_ORDER } from "@/lib/auction-engine"
 import type { LeagueTeam, Bid, Position } from "@/types"
 import { SQUAD_RULES } from "@/types"
 
@@ -228,9 +228,44 @@ function MyBidPanel({
 // ── MyActionPanel — exported separately so the page can place it at the top ──
 
 export function MyActionPanel() {
-  const { currentLot, bids, teams, myTeamId, myRole, refresh, filledSlotsByTeam, myClubCounts } = useAuction()
+  const { auction, currentLot, bids, teams, myTeamId, myRole, refresh, filledSlotsByTeam, myClubCounts } = useAuction()
 
   if (myRole !== "team" || !myTeamId) return null
+
+  // Squad-complete-for-this-position status takes priority over any open lot —
+  // once a team has filled its slots for the auction's current position, it
+  // has no eligible action (initial auctions never enroll them as a bidder;
+  // interest-based auctions block declare-interest), so show that plainly
+  // instead of a "waiting" panel that implies they might still get a turn.
+  if (auction && (auction.status === "active" || auction.status === "pending")) {
+    const currentPos = auction.current_position_category as Position | null
+    if (currentPos) {
+      const filled = filledSlotsByTeam[myTeamId]?.[currentPos] ?? 0
+      const max = SQUAD_RULES.slots[currentPos]
+      if (filled >= max) {
+        const isFinalPosition = currentPos === POSITION_ORDER[POSITION_ORDER.length - 1]
+        const nextPos = POSITION_ORDER[POSITION_ORDER.indexOf(currentPos) + 1] ?? null
+        return (
+          <div className="p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-center space-y-1">
+            {isFinalPosition ? (
+              <>
+                <p className="text-sm font-semibold text-emerald-500">🎉 Squad complete!</p>
+                <p className="text-xs text-muted-foreground">You&apos;ve filled every slot — you&apos;re done with this auction.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-semibold text-emerald-500">✓ {currentPos} slots filled ({filled}/{max})</p>
+                <p className="text-xs text-muted-foreground">
+                  You&apos;ll be back in once the auction moves to {nextPos ?? "the next position"}.
+                </p>
+              </>
+            )}
+          </div>
+        )
+      }
+    }
+  }
+
   if (!currentLot || currentLot.phase === "concluded" || currentLot.phase === "pending") return null
 
   const { phase, current_bid, current_bidder_id, player, id: lotId, current_turn_team_id } = currentLot
