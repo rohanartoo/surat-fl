@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
 import { validateBid, getNextBidder, getNextBidStartIndex, isSoloWin, chooseSlotType, POSITION_ORDER } from "@/lib/auction-engine"
-import { lockAndCommitDrops } from "@/lib/drops"
+import { lockAndCommitDrops, checkReDraftEligibility } from "@/lib/drops"
 import type { Position } from "@/types"
 import { SQUAD_RULES, AUCTION_TIMER_SECONDS } from "@/types"
 
@@ -392,13 +392,6 @@ async function handleDeclareInterest(request: NextRequest) {
       .maybeSingle()
 
     if (drop) {
-      if (drop.dropped_post_summer) {
-        return err("You cannot re-draft a player you dropped after the post-summer transfer window. This restriction is permanent for this season.")
-      }
-      if (drop.dropped_post_january) {
-        return err("You cannot re-draft a player you dropped after the post-January transfer window. This restriction is permanent for this season.")
-      }
-      // Dropped before post_jan — blocked until a post_jan or post_summer auction has begun
       const { data: postWindowAuction } = await supabase
         .from("auctions")
         .select("id")
@@ -407,8 +400,9 @@ async function handleDeclareInterest(request: NextRequest) {
         .limit(1)
         .maybeSingle()
 
-      if (!postWindowAuction) {
-        return err("You cannot re-draft a player you dropped. Re-drafting is only allowed from the post-January transfer window auction onwards.")
+      const eligibilityError = checkReDraftEligibility(drop, !!postWindowAuction)
+      if (eligibilityError) {
+        return err(eligibilityError)
       }
     }
   }
@@ -1107,7 +1101,8 @@ async function handleAdvancePosition(request: NextRequest) {
 }
 
 // ─────────────────────────────────────────────
-// CANCEL — delete a pending or active auction, restoring snapshot if active
+// CANCEL — delete a pending or active auction, restoring snapshot if active.
+// Dropped players are fully returned to their teams' benches with no drop marker.
 // Body: { auction_id: string }
 // ─────────────────────────────────────────────
 async function handleCancel(request: NextRequest) {
@@ -1121,9 +1116,34 @@ async function handleCancel(request: NextRequest) {
   if (!auction) return err("Auction not found.", 404)
   if (!["pending", "active"].includes(auction.status)) return err("Only pending or active auctions can be cancelled.")
 
-  // If active, attempt snapshot restore (best-effort — skip if no snapshot exists)
+  // Capture drop records before any restoration so we know which players to un-drop.
+  // For a pending auction these are "staged"; for an active auction they are "locked".
+  const { data: dropRecords } = await supabase
+    .from("team_drops")
+    .select("player_id")
+    .eq("auction_id", auction_id)
+
+  // If active, restore budgets, player prices, and rosters from the pre-auction snapshot.
+  // Note: restoreFromSnapshot also re-inserts the team_drops as "staged" — we clean those
+  // up explicitly below since there is no ON DELETE CASCADE from auctions → team_drops.
   if (auction.status === "active") {
     await restoreFromSnapshot(auction_id, supabase)
+  }
+
+  // Remove all drop records for this auction. After a cancel the teams start fresh —
+  // no staged or orphaned drops should remain pointing at a deleted auction.
+  await supabase.from("team_drops").delete().eq("auction_id", auction_id)
+
+  // Move each dropped player's roster entry back to bench so they appear on the
+  // team's squad without any drop marker. bench_order is set to null; teams can
+  // rearrange their bench manually after the cancel if needed.
+  if (dropRecords && dropRecords.length > 0) {
+    const playerIds = dropRecords.map(d => d.player_id)
+    await supabase
+      .from("roster_entries")
+      .update({ slot_type: "bench", bench_order: null })
+      .in("player_id", playerIds)
+      .eq("slot_type", "dropped")
   }
 
   // Delete the auction (cascades to lots, bids, log, transfer records, snapshot)

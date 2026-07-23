@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { freeDropsForType, getDropQuota } from "@/lib/drops"
+import { freeDropsForType, getDropQuota, checkReDraftEligibility } from "@/lib/drops"
 import type { AuctionType } from "@/types"
 
 // ─── freeDropsForType ─────────────────────────────────────────────────────────
@@ -83,3 +83,37 @@ describe("getDropQuota", () => {
     expect(result.total_free).toBe(3)
   })
 })
+
+// ─── checkReDraftEligibility ──────────────────────────────────────────────────
+
+describe("checkReDraftEligibility", () => {
+  it("allows re-drafting if there is no drop record (drop = null)", () => {
+    const result = checkReDraftEligibility(null, false)
+    expect(result).toBeNull()
+  })
+
+  it("blocks re-drafting permanently if dropped post-summer", () => {
+    const drop = { dropped_post_january: false, dropped_post_summer: true }
+    const result = checkReDraftEligibility(drop, false)
+    expect(result).toBe("You cannot re-draft a player you dropped after the post-summer transfer window. This restriction is permanent for this season.")
+  })
+
+  it("blocks re-drafting permanently if dropped post-january", () => {
+    const drop = { dropped_post_january: true, dropped_post_summer: false }
+    const result = checkReDraftEligibility(drop, false)
+    expect(result).toBe("You cannot re-draft a player you dropped after the post-January transfer window. This restriction is permanent for this season.")
+  })
+
+  it("blocks pre-january drop re-drafting if no post-window auction has occurred yet", () => {
+    const drop = { dropped_post_january: false, dropped_post_summer: false }
+    const result = checkReDraftEligibility(drop, false)
+    expect(result).toBe("You cannot re-draft a player you dropped. Re-drafting is only allowed from the post-January transfer window auction onwards.")
+  })
+
+  it("allows pre-january drop re-drafting once a post-window auction has occurred", () => {
+    const drop = { dropped_post_january: false, dropped_post_summer: false }
+    const result = checkReDraftEligibility(drop, true)
+    expect(result).toBeNull()
+  })
+})
+

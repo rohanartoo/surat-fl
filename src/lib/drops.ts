@@ -71,3 +71,27 @@ export async function lockAndCommitDrops(
 
   return { locked: staged.length }
 }
+
+/**
+ * Checks if a team is eligible to re-draft a player they previously dropped.
+ * Returns null if allowed, or an error message string if blocked.
+ */
+export function checkReDraftEligibility(
+  drop: { dropped_post_january: boolean; dropped_post_summer: boolean } | null,
+  postWindowAuctionExists: boolean
+): string | null {
+  if (!drop) return null
+
+  if (drop.dropped_post_summer) {
+    return "You cannot re-draft a player you dropped after the post-summer transfer window. This restriction is permanent for this season."
+  }
+  if (drop.dropped_post_january) {
+    return "You cannot re-draft a player you dropped after the post-January transfer window. This restriction is permanent for this season."
+  }
+  if (!postWindowAuctionExists) {
+    return "You cannot re-draft a player you dropped. Re-drafting is only allowed from the post-January transfer window auction onwards."
+  }
+
+  return null
+}
+

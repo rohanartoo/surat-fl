@@ -84,6 +84,12 @@ async function handleFullWipe() {
   if (dropsErr) return NextResponse.json({ error: `team_drops: ${dropsErr.message}` }, { status: 500 })
   steps.push("team drops deleted")
 
+  // Must delete team_transfer_records before auctions — no ON DELETE CASCADE on that FK
+  const { error: transferErr } = await supabase
+    .from("team_transfer_records").delete().neq("id", "00000000-0000-0000-0000-000000000000")
+  if (transferErr) return NextResponse.json({ error: `team_transfer_records: ${transferErr.message}` }, { status: 500 })
+  steps.push("team transfer records deleted")
+
   const { error: auctionsErr } = await supabase
     .from("auctions").delete().neq("id", "00000000-0000-0000-0000-000000000000")
   if (auctionsErr) return NextResponse.json({ error: `auctions: ${auctionsErr.message}` }, { status: 500 })

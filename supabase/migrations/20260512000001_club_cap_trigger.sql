@@ -26,6 +26,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists enforce_club_cap on public.roster_entries;
 create trigger enforce_club_cap
   before insert on public.roster_entries
   for each row execute function public.check_club_cap();

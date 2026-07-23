@@ -19,6 +19,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists enforce_profile_security on public.profiles;
 create trigger enforce_profile_security
   before update on public.profiles
   for each row execute function public.protect_profile_fields();
