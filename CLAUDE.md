@@ -41,6 +41,7 @@ Tech stack: Next.js 16 (App Router), Supabase (Postgres + Auth + Realtime), Tail
 ### Bidding
 - Opening bid ≥ player base price. Increments: +£1m when current bid < £20m, +£2m when ≥ £20m.
 - Fold = eliminated for that player. Last team standing wins at current bid.
+- If everyone else folds before any bid is placed, the last team standing wins at base price (same as the solo-interest rule). The AM still confirms via Assign.
 - Max bid = budget − (empty slots − 1), ensuring team can fill remaining slots at £1m each.
 
 ### Auction types & drop quotas
