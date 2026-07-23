@@ -21,6 +21,8 @@ function logLine(entry: AuctionLogEntry): string {
       return `✗ ${p.team_name} folded`
     case "player_assigned":
       return `✅ ${p.player_name} → ${p.winning_team_name} for ${formatMoney(p.winning_bid as number)}`
+    case "assignment_undone":
+      return `↩️ ${p.player_name} assignment to ${p.team_name} undone`
     case "lot_no_interest":
       return `⏭ Player passed — no interest`
     default:

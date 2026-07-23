@@ -14,7 +14,7 @@ import { SQUAD_RULES } from "@/types"
 import type { Position } from "@/types"
 
 export function AuctionMasterControls() {
-  const { auction, currentLot, bids, teams, myRole, filledSlotsByTeam, refresh } = useAuction()
+  const { auction, currentLot, lastConcludedLot, bids, teams, myRole, filledSlotsByTeam, refresh } = useAuction()
   const { post: apiPost, loading, error, setError } = useApiAction("/api/auction")
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
@@ -382,6 +382,24 @@ export function AuctionMasterControls() {
           <p className="text-xs text-muted-foreground italic mb-3">
             Click "Nominate" on a player in the list to open a lot.
           </p>
+        )}
+
+        {lastConcludedLot?.winning_team_id && (
+          <div className="rounded-md bg-muted/40 border border-border/60 px-3 py-2.5 space-y-1.5 mb-3">
+            <p className="text-xs text-muted-foreground">
+              Last assigned: <span className="text-foreground font-medium">{lastConcludedLot.player.web_name}</span>
+              {" — "}{formatMoney(lastConcludedLot.winning_bid ?? 0)}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full text-xs text-destructive hover:bg-destructive/10 border-destructive/40"
+              disabled={loading}
+              onClick={() => post("undo-last-assignment", { auction_id: auction.id })}
+            >
+              Undo last assignment
+            </Button>
+          </div>
         )}
 
         {/* End Draft */}
