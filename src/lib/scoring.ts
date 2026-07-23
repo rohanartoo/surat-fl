@@ -119,7 +119,12 @@ export async function syncGameweekPoints(
     const starting = entries.filter(e => e.slot_type === "starting")
     const bench = entries
       .filter(e => e.slot_type === "bench")
-      .sort((a, b) => (a.bench_order ?? 99) - (b.bench_order ?? 99))
+      .sort((a, b) => {
+        const orderA = a.bench_order ?? 99
+        const orderB = b.bench_order ?? 99
+        if (orderA !== orderB) return orderA - orderB
+        return a.id.localeCompare(b.id)
+      })
 
     // Only run auto-subs when starting XI is complete
     const effectiveXI = starting.length === SQUAD_RULES.starting

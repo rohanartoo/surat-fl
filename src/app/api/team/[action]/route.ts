@@ -217,14 +217,23 @@ async function handleReturnFromDrop(request: NextRequest) {
 
   await assertOwnership(entry.team_id)
 
+  // Find current pending/active auction
+  const { data: auction } = await supabase
+    .from("auctions").select("id").in("status", ["pending", "active"]).maybeSingle()
+
   // Find the staged drop record
-  const { data: drop } = await supabase
+  let dropQuery = supabase
     .from("team_drops")
     .select("id, status")
     .eq("team_id", entry.team_id)
     .eq("player_id", entry.player_id)
     .eq("status", "staged")
-    .maybeSingle()
+
+  if (auction) {
+    dropQuery = dropQuery.eq("auction_id", auction.id)
+  }
+
+  const { data: drop } = await dropQuery.maybeSingle()
 
   if (!drop) return err("No staged drop found for this player.")
 
