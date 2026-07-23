@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { getCurrentAuction } from "@/lib/auctions"
 
 /**
  * GET /api/chat/context
@@ -10,11 +11,7 @@ import { createClient } from "@/lib/supabase/server"
 export async function GET() {
   const supabase = await createClient()
 
-  const { data: auction } = await supabase
-    .from("auctions")
-    .select("id")
-    .in("status", ["pending", "active"])
-    .maybeSingle()
+  const auction = await getCurrentAuction(supabase)
 
   const auctionId: string | null = auction?.id ?? null
 

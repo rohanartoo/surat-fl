@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { syncGameweekPoints, applyDropPenalties } from "@/lib/scoring"
 import { fetchFplBootstrap } from "@/lib/fpl"
+import { verifySyncSecret } from "@/lib/auth"
 
 function createClient() {
   return createServiceClient(
@@ -18,7 +19,7 @@ function createClient() {
  */
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization")
-  if (authHeader !== `Bearer ${process.env.SYNC_SECRET}`) {
+  if (!verifySyncSecret(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 

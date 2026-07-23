@@ -1,19 +1,11 @@
 import { NextResponse } from "next/server"
-import { timingSafeEqual } from "crypto"
 import { createClient as createSupabaseClient } from "@supabase/supabase-js"
 import { fetchFplBootstrap, mapFplPlayer } from "@/lib/fpl"
-
-function safeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a)
-  const bufB = Buffer.from(b)
-  if (bufA.length !== bufB.length) return false
-  return timingSafeEqual(bufA, bufB)
-}
+import { verifySyncSecret } from "@/lib/auth"
 
 export async function POST(request: Request) {
-  const authHeader = request.headers.get("authorization") ?? ""
-  const expectedHeader = `Bearer ${process.env.SYNC_SECRET}`
-  if (!safeCompare(authHeader, expectedHeader)) {
+  const authHeader = request.headers.get("authorization")
+  if (!verifySyncSecret(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 

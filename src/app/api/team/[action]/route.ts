@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, assertOwnership } from "@/lib/roles"
 import { validateFormation } from "@/lib/auction-engine"
+import { getCurrentAuction } from "@/lib/auctions"
 import { calcDropPrice } from "@/lib/utils"
 import { SQUAD_RULES } from "@/types"
 import type { Position } from "@/types"
@@ -172,8 +173,7 @@ async function handleMarkDrop(request: NextRequest) {
   await assertOwnership(entry.team_id)
 
   // Find the current active auction (for the team_drops foreign key)
-  const { data: auction } = await supabase
-    .from("auctions").select("id, type").in("status", ["pending", "active"]).maybeSingle()
+  const auction = await getCurrentAuction<{ id: string; type: string }>(supabase, "id, type")
   if (!auction) return err("No active auction — drops can only be staged during an auction window.")
 
   const dropPrice = calcDropPrice(entry.base_price)
@@ -218,22 +218,18 @@ async function handleReturnFromDrop(request: NextRequest) {
   await assertOwnership(entry.team_id)
 
   // Find current pending/active auction
-  const { data: auction } = await supabase
-    .from("auctions").select("id").in("status", ["pending", "active"]).maybeSingle()
+  const auction = await getCurrentAuction(supabase)
+  if (!auction) return err("No active auction — staged drops can only be returned during an auction window.")
 
-  // Find the staged drop record
-  let dropQuery = supabase
+  // Find the staged drop record, scoped to the current auction
+  const { data: drop } = await supabase
     .from("team_drops")
     .select("id, status")
     .eq("team_id", entry.team_id)
     .eq("player_id", entry.player_id)
     .eq("status", "staged")
-
-  if (auction) {
-    dropQuery = dropQuery.eq("auction_id", auction.id)
-  }
-
-  const { data: drop } = await dropQuery.maybeSingle()
+    .eq("auction_id", auction.id)
+    .maybeSingle()
 
   if (!drop) return err("No staged drop found for this player.")
 

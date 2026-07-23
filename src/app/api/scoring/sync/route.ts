@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { getProfile } from "@/lib/roles"
 import { syncGameweekPoints, applyDropPenalties } from "@/lib/scoring"
+import { verifySyncSecret } from "@/lib/auth"
 
 function createClient() {
   return createServiceClient(
@@ -13,7 +14,7 @@ function createClient() {
 export async function POST(request: Request) {
   // Two auth paths: scheduled cron (Bearer token) or admin session
   const authHeader = request.headers.get("authorization")
-  const isScheduled = authHeader === `Bearer ${process.env.SYNC_SECRET}`
+  const isScheduled = verifySyncSecret(authHeader)
 
   if (!isScheduled) {
     const profile = await getProfile()

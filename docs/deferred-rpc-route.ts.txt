@@ -1,7 +1,32 @@
+// PRESERVED, NOT LIVE CODE.
+//
+// This is the RPC-based version of src/app/api/auction/[action]/route.ts,
+// written 2026-07-23 to close race conditions across concurrent bids/folds/
+// assigns by moving every mutation into a locked Postgres function (see
+// supabase/migrations/20260723000001_auction_rpc_transactions.sql).
+//
+// It was reverted back to the old sequential-JS version before going live
+// because the project's Data API (PostgREST) stopped exposing any newly
+// created Postgres function — confirmed not RPC-specific via a throwaway
+// test function, and the issue survived NOTIFY reload, a dashboard
+// re-toggle of "Exposed functions", and two full project restarts. This
+// looks like a genuine platform-side stuck cache; a Supabase support
+// ticket is needed to resolve it.
+//
+// Once support confirms new functions are exposed again (test with the
+// six rpc_* functions in the migration above), replace
+// src/app/api/auction/[action]/route.ts with the contents below, run
+// `npx tsc --noEmit`, and also restore the "Undo last assignment" AM
+// button (see git stash or recreate: AuctionMasterControls.tsx needed a
+// lastConcludedLot-gated block calling post("undo-last-assignment", ...),
+// and AuctionLog.tsx needed an "assignment_undone" case in logLine()).
+//
+// =============================================================================
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
-import { validateBid, getNextBidder, getNextBidStartIndex, isSoloWin, chooseSlotType, POSITION_ORDER } from "@/lib/auction-engine"
+import { getNextBidder, isSoloWin, POSITION_ORDER } from "@/lib/auction-engine"
 import { lockAndCommitDrops, checkReDraftEligibility } from "@/lib/drops"
 import { getCurrentAuction } from "@/lib/auctions"
 import type { Position } from "@/types"
@@ -36,6 +61,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       case "fold":             return handleFold(request)
       case "assign-player":    return handleAssignPlayer(request)
       case "undo-bid":         return handleUndoBid(request)
+      case "undo-last-assignment": return handleUndoLastAssignment(request)
       case "reset-timer":      return handleResetTimer(request)
       case "return-to-pool":   return handleReturnToPool(request)
       case "advance-position": return handleAdvancePosition(request)
@@ -558,80 +584,12 @@ async function handlePlaceBid(request: NextRequest) {
   const { lot_id, amount } = await request.json()
   if (!lot_id || typeof amount !== "number" || !Number.isFinite(amount)) return err("lot_id and amount required.")
 
-  const { data: lot } = await supabase
-    .from("auction_lots")
-    .select("*, player:players(base_price, position)")
-    .eq("id", lot_id).single()
-  if (!lot) return err("Lot not found.", 404)
-  if (lot.phase !== "bidding") return err("Lot is not in bidding phase.")
+  const { data, error } = await supabase
+    .rpc("rpc_place_bid", { p_lot_id: lot_id, p_team_id: profile.team_id, p_amount: amount })
+    .single<{ new_high: number; next_turn_team_id: string | null }>()
+  if (error) return err(error.message)
 
-  // Enforce turn order
-  if (lot.current_turn_team_id && lot.current_turn_team_id !== profile.team_id) {
-    return err("It is not your turn to bid.")
-  }
-
-  const { data: myBid } = await supabase
-    .from("bids").select("is_folded, is_interested")
-    .eq("lot_id", lot_id).eq("team_id", profile.team_id).maybeSingle()
-  if (myBid?.is_folded) return err("Your team has already folded.")
-  if (myBid && !myBid.is_interested) return err("Your team passed on this player.")
-
-  const { data: team } = await supabase
-    .from("teams").select("budget, display_name").eq("id", profile.team_id).single()
-  if (!team) return err("Team not found.", 404)
-
-  const { data: roster } = await supabase
-    .from("roster_entries").select("id").eq("team_id", profile.team_id).in("slot_type", ["starting", "bench"])
-  const emptySlots = SQUAD_RULES.total - (roster ?? []).length
-
-  const validationError = validateBid(amount, lot.current_bid, lot.player.base_price, team.budget, emptySlots)
-  if (validationError) return err(validationError.message)
-
-  // Advance turn to next active bidder after this team
-  const { data: auction } = await supabase
-    .from("auctions").select("auction_order").eq("id", lot.auction_id).single()
-  const auctionOrder = (auction?.auction_order as string[]) ?? []
-
-  const { data: allBids } = await supabase
-    .from("bids").select("team_id, is_folded, is_interested").eq("lot_id", lot_id)
-
-  // Active = interested and not folded, excluding the team that just bid (they remain active)
-  const activeAfterBid = new Set(
-    (allBids ?? [])
-      .filter(b => b.is_interested && !b.is_folded && b.team_id !== profile.team_id)
-      .map(b => b.team_id)
-  )
-
-  const currentIndex = auctionOrder.indexOf(profile.team_id)
-  const nextBidder = getNextBidder(auctionOrder, (currentIndex + 1) % auctionOrder.length, activeAfterBid)
-
-  const prevHighBid = lot.current_bid
-
-  await supabase.from("auction_lots").update({
-    current_bid: amount,
-    current_bidder_id: profile.team_id,
-    current_turn_team_id: nextBidder?.teamId ?? null,
-  }).eq("id", lot_id)
-
-  await supabase.from("bids").upsert(
-    { lot_id, team_id: profile.team_id, amount, is_interested: true, is_folded: false },
-    { onConflict: "lot_id,team_id" }
-  )
-
-  await supabase.from("auction_log").insert({
-    auction_id: lot.auction_id,
-    action_type: "bid_placed",
-    payload: {
-      lot_id,
-      team_id: profile.team_id,
-      team_name: team.display_name,
-      amount,
-      prev_high_bid: prevHighBid,
-      next_turn_team_id: nextBidder?.teamId ?? null,
-    },
-  })
-
-  return NextResponse.json({ success: true, new_high: amount, next_turn: nextBidder?.teamId ?? null })
+  return NextResponse.json({ success: true, new_high: data.new_high, next_turn: data.next_turn_team_id })
 }
 
 // ─────────────────────────────────────────────
@@ -648,64 +606,17 @@ async function handleFold(request: NextRequest) {
   const { lot_id } = await request.json()
   if (!lot_id) return err("lot_id required.")
 
-  const { data: lot } = await supabase
-    .from("auction_lots")
-    .select("*, player:players(id, web_name, base_price, position)")
-    .eq("id", lot_id).single()
-  if (!lot) return err("Lot not found.", 404)
-  if (lot.phase !== "bidding") return err("Lot is not in bidding phase.")
+  const { data, error } = await supabase
+    .rpc("rpc_fold_bid", { p_lot_id: lot_id, p_team_id: profile.team_id })
+    .single<{
+      concluded: boolean; reason: string | null; active_bidders: number
+      next_turn_team_id: string | null; pending_winner: string | null
+    }>()
+  if (error) return err(error.message)
 
-  // Enforce turn order
-  if (lot.current_turn_team_id && lot.current_turn_team_id !== profile.team_id) {
-    return err("It is not your turn.")
-  }
-
-  const { error: foldErr } = await supabase
-    .from("bids").update({ is_folded: true })
-    .eq("lot_id", lot_id).eq("team_id", profile.team_id)
-  if (foldErr) return err(foldErr.message)
-
-  const { data: team } = await supabase
-    .from("teams").select("display_name").eq("id", profile.team_id).single()
-
-  await supabase.from("auction_log").insert({
-    auction_id: lot.auction_id,
-    action_type: "team_folded",
-    payload: { lot_id, team_id: profile.team_id, team_name: team?.display_name ?? "" },
-  })
-
-  // Check remaining active bidders
-  const { data: allBids } = await supabase
-    .from("bids").select("team_id, is_folded, is_interested").eq("lot_id", lot_id)
-  const active = (allBids ?? []).filter(b => b.is_interested && !b.is_folded)
-
-  if (active.length === 0) {
-    // Everyone folded — close with no winner
-    await supabase.from("auction_lots").update({ phase: "concluded", current_turn_team_id: null }).eq("id", lot_id)
-    return NextResponse.json({ concluded: true, reason: "all_folded" })
-  }
-
-  if (active.length === 1) {
-    // Last bidder standing — clear turn pointer and wait for AM to confirm assignment
-    await supabase.from("auction_lots")
-      .update({ current_turn_team_id: null })
-      .eq("id", lot_id)
-    return NextResponse.json({ success: true, active_bidders: 1, pending_winner: active[0].team_id })
-  }
-
-  // Advance turn to next active bidder
-  const { data: auction } = await supabase
-    .from("auctions").select("auction_order").eq("id", lot.auction_id).single()
-  const auctionOrder = (auction?.auction_order as string[]) ?? []
-  const activeSet = new Set(active.map(b => b.team_id))
-  const currentIndex = auctionOrder.indexOf(profile.team_id)
-  const nextBidder = getNextBidder(auctionOrder, (currentIndex + 1) % auctionOrder.length, activeSet)
-
-  await supabase.from("auction_lots")
-    .update({ current_turn_team_id: nextBidder?.teamId ?? null })
-    .eq("id", lot_id)
-
-  return NextResponse.json({ success: true, active_bidders: active.length, next_turn: nextBidder?.teamId ?? null })
+  if (data.concluded) return NextResponse.json({ concluded: true, reason: data.reason })
+  if (data.pending_winner) return NextResponse.json({ success: true, active_bidders: 1, pending_winner: data.pending_winner })
+  return NextResponse.json({ success: true, active_bidders: data.active_bidders, next_turn: data.next_turn_team_id })
 }
 
 // ─────────────────────────────────────────────
@@ -718,20 +629,18 @@ async function handleAssignPlayer(request: NextRequest) {
   const { lot_id } = await request.json()
   if (!lot_id) return err("lot_id required.")
 
-  const { data: lot } = await supabase
-    .from("auction_lots")
-    .select("*, player:players(id, web_name, base_price, position)")
-    .eq("id", lot_id).single()
-  if (!lot) return err("Lot not found.", 404)
-  if (lot.phase !== "bidding") return err("Lot is not in bidding phase.")
-  if (!lot.current_bidder_id || lot.current_bid === null) {
-    return err("No bid placed yet.")
-  }
+  const { data, error } = await supabase
+    .rpc("rpc_assign_player", { p_lot_id: lot_id })
+    .single<{ slot_type: string; new_budget: number; player_name: string; team_name: string; price: number }>()
+  if (error) return err(error.message)
 
-  const { data: auction } = await supabase
-    .from("auctions").select("auction_order, current_bidder_index").eq("id", lot.auction_id).single()
-
-  return autoAssign(supabase, lot, auction, lot.current_bidder_id, lot.current_bid)
+  return NextResponse.json({
+    success: true,
+    player: data.player_name,
+    team: data.team_name,
+    price: data.price,
+    new_budget: data.new_budget,
+  })
 }
 
 // ─────────────────────────────────────────────
@@ -747,55 +656,12 @@ async function handleUndoBid(request: NextRequest) {
   const { lot_id } = await request.json()
   if (!lot_id) return err("lot_id required.")
 
-  const { data: lot } = await supabase
-    .from("auction_lots")
-    .select("*, player:players(base_price)")
-    .eq("id", lot_id).single()
-  if (!lot) return err("Lot not found.", 404)
-  if (lot.phase !== "bidding") return err("Lot is not in bidding phase.")
+  const { data, error } = await supabase
+    .rpc("rpc_undo_bid", { p_lot_id: lot_id, p_team_id: profile.team_id })
+    .single<{ restored_bid: number | null }>()
+  if (error) return err(error.message)
 
-  if (lot.current_bidder_id !== profile.team_id) {
-    return err("You can only undo your own bid while it is still the highest.")
-  }
-  if (lot.current_turn_team_id === profile.team_id) {
-    return err("Cannot undo — the next team has already placed a bid.")
-  }
-
-  // Find the previous highest bid among all other teams
-  const { data: otherBids } = await supabase
-    .from("bids")
-    .select("team_id, amount")
-    .eq("lot_id", lot_id)
-    .neq("team_id", profile.team_id)
-    .not("amount", "is", null)
-    .order("amount", { ascending: false })
-    .limit(1)
-
-  const prevBid = otherBids?.[0] ?? null
-  const prevAmount = prevBid?.amount ?? null
-  const prevBidderId = prevBid?.team_id ?? null
-
-  const undoneAmount = lot.current_bid
-
-  await supabase.from("auction_lots").update({
-    current_bid: prevAmount,
-    current_bidder_id: prevBidderId,
-    current_turn_team_id: profile.team_id,
-  }).eq("id", lot_id)
-
-  await supabase.from("bids").update({ amount: null })
-    .eq("lot_id", lot_id).eq("team_id", profile.team_id)
-
-  const { data: team } = await supabase
-    .from("teams").select("display_name").eq("id", profile.team_id).single()
-
-  await supabase.from("auction_log").insert({
-    auction_id: lot.auction_id,
-    action_type: "bid_undone",
-    payload: { lot_id, team_id: profile.team_id, team_name: team?.display_name ?? "", undone_amount: undoneAmount },
-  })
-
-  return NextResponse.json({ success: true, restored_bid: prevAmount })
+  return NextResponse.json({ success: true, restored_bid: data.restored_bid })
 }
 
 // ─────────────────────────────────────────────
@@ -821,205 +687,33 @@ async function handleResetTimer(request: NextRequest) {
 }
 
 // ─────────────────────────────────────────────
-// SHARED: assign player, deduct budget, advance bid order
+// UNDO-LAST-ASSIGNMENT — AM reverses the most recently concluded lot
+// Body: { auction_id: string }
 // ─────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function autoAssign(supabase: any, lot: any, auction: any, teamId: string, price: number) {
-  const { data: team } = await supabase
-    .from("teams").select("budget, display_name").eq("id", teamId).single()
-  if (!team) return err("Winning team not found.", 404)
+async function handleUndoLastAssignment(request: NextRequest) {
+  await requireRole("auction_master")
+  const supabase = createClient()
+  const { auction_id } = await request.json()
+  if (!auction_id) return err("auction_id required.")
 
-  const newBudget = team.budget - price
-  if (newBudget < 0) return err("Team cannot afford this player.")
+  const { data, error } = await supabase
+    .rpc("rpc_undo_last_assignment", { p_auction_id: auction_id })
+    .single<{ player_name: string; team_name: string }>()
+  if (error) return err(error.message)
 
-  // Club cap: max 3 players from the same FPL club
-  const { data: assignedPlayer } = await supabase
-    .from("players").select("fpl_team").eq("id", lot.player_id).single()
-
-  if (assignedPlayer?.fpl_team) {
-    const { data: clubRoster } = await supabase
-      .from("roster_entries")
-      .select("player:players(fpl_team)")
-      .eq("team_id", teamId)
-      .in("slot_type", ["starting", "bench"])
-
-    const clubCount = (clubRoster ?? []).filter(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (r: any) => (r.player as { fpl_team: string } | null)?.fpl_team === assignedPlayer.fpl_team
-    ).length
-
-    if (clubCount >= SQUAD_RULES.max_per_club) {
-      return err(`Club cap reached: team already has ${SQUAD_RULES.max_per_club} players from ${assignedPlayer.fpl_team}.`)
-    }
-  }
-
-  // Determine correct slot (starting vs bench) based on current roster
-  const { data: currentRoster } = await supabase
-    .from("roster_entries")
-    .select("slot_type, player:players(position)")
-    .eq("team_id", teamId)
-    .in("slot_type", ["starting", "bench"])
-
-  const rosterForSlot = (currentRoster ?? []).map((r: { slot_type: string; player: { position: string } }) => ({
-    slot_type: r.slot_type,
-    position: r.player.position as Position,
-  }))
-
-  const playerPosition = (lot.player.position ?? lot.player_position) as Position
-  const slotType = chooseSlotType(playerPosition, rosterForSlot)
-
-  // If going to bench, find the lowest unused bench_order (1–4)
-  let benchOrder: number | null = null
-  if (slotType === "bench") {
-    // Re-fetch actual bench_order values since rosterForSlot doesn't include them
-    const { data: benchRows } = await supabase
-      .from("roster_entries")
-      .select("bench_order")
-      .eq("team_id", teamId)
-      .eq("slot_type", "bench")
-    const usedBenchOrders = new Set((benchRows ?? []).map((r: { bench_order: number | null }) => r.bench_order))
-    benchOrder = [1, 2, 3, 4].find(n => !usedBenchOrders.has(n)) ?? null
-  }
-
-  const { error: rosterError } = await supabase.from("roster_entries").insert({
-    team_id: teamId,
-    player_id: lot.player_id,
-    slot_type: slotType,
-    bench_order: benchOrder,
-    base_price: price,
-    is_captain: false,
-    is_vice_captain: false,
-  })
-  if (rosterError) return err(rosterError.message)
-
-  const [{ error: budgetErr }, { error: priceErr }, { error: lotErr }] = await Promise.all([
-    supabase.from("teams").update({ budget: newBudget }).eq("id", teamId),
-    supabase.from("players").update({ base_price: price }).eq("id", lot.player_id),
-    supabase.from("auction_lots").update({
-      phase: "concluded",
-      winning_team_id: teamId,
-      winning_bid: price,
-      current_turn_team_id: null,
-    }).eq("id", lot.id),
-  ])
-  if (budgetErr) return err(`budget update: ${budgetErr.message}`)
-  if (priceErr) return err(`base_price update: ${priceErr.message}`)
-  if (lotErr) return err(`lot close: ${lotErr.message}`)
-
-  await supabase.from("auction_log").insert({
-    auction_id: lot.auction_id,
-    action_type: "player_assigned",
-    payload: {
-      lot_id: lot.id,
-      player_id: lot.player_id,
-      player_name: lot.player.web_name,
-      winning_team_id: teamId,
-      winning_team_name: team.display_name,
-      winning_bid: price,
-      prev_budget: team.budget,
-      prev_base_price: lot.player.base_price,
-    },
-  })
-
-  // Advance auction.current_bidder_index to next team with open slots for this position
-  if (auction) {
-    const auctionOrder = (auction.auction_order as string[]) ?? []
-    const position = lot.player.position as Position
-
-    // Fetch current roster fill counts for this position
-    const { data: rosterRows } = await supabase
-      .from("roster_entries")
-      .select("team_id, player:players(position)")
-      .in("slot_type", ["starting", "bench"])
-
-    const filledByTeam: Record<string, number> = {}
-    for (const row of rosterRows ?? []) {
-      const pos = (row.player as unknown as { position: string } | null)?.position
-      if (pos === position) {
-        filledByTeam[row.team_id] = (filledByTeam[row.team_id] ?? 0) + 1
-      }
-    }
-
-    const maxSlots = SQUAD_RULES.slots[position as Position]
-    const teamsWithOpenSlots = new Set(
-      auctionOrder.filter(id => (filledByTeam[id] ?? 0) < maxSlots)
-    )
-
-    const currentIndex = auction.current_bidder_index ?? 0
-    // Advance from current pointer — winner is irrelevant to rotation
-    const nextIndex = getNextBidStartIndex(
-      auctionOrder,
-      currentIndex,
-      teamsWithOpenSlots
-    )
-
-    await supabase.from("auctions")
-      .update({ current_bidder_index: nextIndex })
-      .eq("id", lot.auction_id)
-  }
-
-  return NextResponse.json({
-    success: true,
-    player: lot.player.web_name,
-    team: team.display_name,
-    price,
-    new_budget: newBudget,
-  })
+  return NextResponse.json({ success: true, player: data.player_name, team: data.team_name })
 }
 
 // ─────────────────────────────────────────────
 // SHARED HELPER — restore league state from pre-auction snapshot
 // ─────────────────────────────────────────────
 export async function restoreFromSnapshot(auction_id: string, supabase: ReturnType<typeof createClient>): Promise<{ restored: boolean }> {
-  const { data: snapshotRow } = await supabase
-    .from("auction_snapshots")
-    .select("snapshot")
-    .eq("auction_id", auction_id)
-    .single()
+  const { data, error } = await supabase
+    .rpc("rpc_restore_snapshot", { p_auction_id: auction_id })
+    .single<{ restored: boolean }>()
+  if (error) throw new Error(error.message)
 
-  if (!snapshotRow) return { restored: false as const }
-
-  const snap = snapshotRow.snapshot as {
-    teams: { id: string; budget: number }[]
-    roster_entries: {
-      id: string; team_id: string; player_id: number; slot_type: string
-      bench_order: number | null; is_captain: boolean; is_vice_captain: boolean; base_price: number
-    }[]
-    players: { id: number; base_price: number }[]
-    team_drops: {
-      id: string; team_id: string; player_id: number; drop_price: number | null
-      status: string; dropped_post_january: boolean; dropped_post_summer: boolean
-      penalty_gameweek: number | null
-    }[]
-  }
-
-  // Restore team budgets
-  for (const team of snap.teams) {
-    await supabase.from("teams").update({ budget: team.budget }).eq("id", team.id)
-  }
-
-  // Restore player base prices
-  for (const player of snap.players) {
-    await supabase.from("players").update({ base_price: player.base_price }).eq("id", player.id)
-  }
-
-  // Restore roster entries
-  const teamIds = [...new Set(snap.roster_entries.map(r => r.team_id))]
-  if (teamIds.length > 0) {
-    await supabase.from("roster_entries").delete().in("team_id", teamIds)
-  }
-  if (snap.roster_entries.length > 0) {
-    await supabase.from("roster_entries").insert(snap.roster_entries)
-  }
-
-  // Restore staged drops
-  await supabase.from("team_drops").delete().eq("auction_id", auction_id)
-  if (snap.team_drops.length > 0) {
-    const dropsToRestore = snap.team_drops.map(d => ({ ...d, auction_id, status: "staged" }))
-    await supabase.from("team_drops").insert(dropsToRestore)
-  }
-
-  return { restored: true as const }
+  return { restored: data.restored }
 }
 
 // ─────────────────────────────────────────────
@@ -1194,10 +888,6 @@ async function handleEndDraft(request: NextRequest) {
   if (incomplete.length > 0) {
     return err(`${incomplete.length} team(s) still need players: ${incomplete.map(t => t.display_name).join(", ")}`)
   }
-
-  // Lock any drops staged after the auction's initial start (mid-active
-  // mark-drops never get committed otherwise) before closing it out.
-  await lockAndCommitDrops(auction_id, supabase)
 
   const { error } = await supabase
     .from("auctions")
