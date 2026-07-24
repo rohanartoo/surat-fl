@@ -38,38 +38,23 @@ export async function getDropQuota(
 }
 
 /**
- * Locks all staged drops for an auction simultaneously and removes those
- * players from roster_entries so they enter the available pool.
- * Called when the AM starts a mini/post_jan/post_summer auction.
+ * Locks all staged drops for an auction simultaneously, credits each
+ * dropping team's budget with the full purchase price of every player they
+ * dropped, and removes those players from roster_entries so they enter the
+ * available pool. Called when the AM starts a mini/post_jan/post_summer
+ * auction. Atomic (see rpc_lock_and_credit_drops) — teams.budget must never
+ * be credited without the corresponding roster rows actually being removed,
+ * or vice versa.
  */
 export async function lockAndCommitDrops(
   auctionId: string,
   supabase: SupabaseClient,
 ): Promise<{ locked: number }> {
-  const { data: staged } = await supabase
-    .from("team_drops")
-    .select("id, player_id")
-    .eq("auction_id", auctionId)
-    .eq("status", "staged")
-
-  if (!staged || staged.length === 0) return { locked: 0 }
-
-  const dropIds = (staged as { id: string }[]).map(d => d.id)
-  const playerIds = (staged as { player_id: number }[]).map(d => d.player_id)
-
-  await supabase
-    .from("team_drops")
-    .update({ status: "locked" })
-    .in("id", dropIds)
-
-  // Remove dropped roster entries — players are now fully in the free pool
-  await supabase
-    .from("roster_entries")
-    .delete()
-    .in("player_id", playerIds)
-    .eq("slot_type", "dropped")
-
-  return { locked: staged.length }
+  const { data, error } = await supabase
+    .rpc("rpc_lock_and_credit_drops", { p_auction_id: auctionId })
+    .single()
+  if (error) throw new Error(error.message)
+  return { locked: (data as { locked: number }).locked }
 }
 
 /**

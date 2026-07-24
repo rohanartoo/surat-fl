@@ -65,6 +65,11 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
 
   const activeCount = startingXI.length + bench.length
   const totalSpent = [...startingXI, ...bench].reduce((s, e) => s + e.base_price, 0)
+  // Staged (not yet locked) drops return their full purchase price to the
+  // team's budget once the auction starts — shown here as a provisional
+  // figure. Naturally empty once locked, since locked drops' roster rows
+  // are deleted rather than staying in the "dropped" slot_type.
+  const pendingDropCredit = dropped.reduce((s, e) => s + e.base_price, 0)
 
   // Optimistically update local state, then sync with server
   const applySwap = useCallback(async (entryId: string, targetSlot: "starting" | "bench", displacedId?: string, newBenchOrder?: number) => {
@@ -183,7 +188,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
 
   return (
     <div className="space-y-6">
-      <TeamBudgetBar budget={teamBudget} totalSpent={totalSpent} activeCount={activeCount} />
+      <TeamBudgetBar budget={teamBudget} totalSpent={totalSpent} activeCount={activeCount} pendingDropCredit={pendingDropCredit} />
 
       {error && (
         <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{error}</p>

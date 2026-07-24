@@ -172,11 +172,15 @@ async function handleMarkDrop(request: NextRequest) {
 
   await assertOwnership(entry.team_id)
 
-  // Find the current active auction (for the team_drops foreign key)
-  const auction = await getCurrentAuction<{ id: string; type: string }>(supabase, "id, type")
+  // Find the current auction (for the team_drops foreign key)
+  const auction = await getCurrentAuction<{ id: string; type: string; status: string }>(supabase, "id, type, status")
   if (!auction) return err("No active auction — drops can only be staged during an auction window.")
   // Teams have no squad to drop from during the initial draft.
   if (auction.type === "initial") return err("Players cannot be dropped during the initial auction.")
+  // Drops are only staged before the auction starts. Once it's live, staged
+  // drops have already been locked in (budget credited, roster freed) and
+  // bidding is underway — new drops wait for the next auction.
+  if (auction.status !== "pending") return err("Drops can only be staged before the auction starts. Mark players for the next auction instead.")
 
   // A drop is permanent (never re-draftable by the same team) when it is made
   // in or after the post-January window — i.e. this is the post-January
@@ -229,9 +233,12 @@ async function handleReturnFromDrop(request: NextRequest) {
 
   await assertOwnership(entry.team_id)
 
-  // Find current pending/active auction
-  const auction = await getCurrentAuction(supabase)
+  // Find the current auction. Un-staging, like staging, is only possible
+  // before the auction starts — once live, any staged drop has already been
+  // locked (see rpc_lock_and_credit_drops) and no longer exists to return.
+  const auction = await getCurrentAuction<{ id: string; status: string }>(supabase, "id, status")
   if (!auction) return err("No active auction — staged drops can only be returned during an auction window.")
+  if (auction.status !== "pending") return err("This drop has already been locked in and can no longer be returned.")
 
   // Find the staged drop record, scoped to the current auction
   const { data: drop } = await supabase
