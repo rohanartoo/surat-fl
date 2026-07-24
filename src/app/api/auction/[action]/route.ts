@@ -488,12 +488,10 @@ async function handleStartBidding(request: NextRequest) {
   const interested = (bids ?? []).filter(b => b.is_interested).map(b => b.team_id)
 
   if (interested.length === 0) {
-    await supabase.from("auction_lots").update({ phase: "concluded" }).eq("id", lot_id)
-    await supabase.from("auction_log").insert({
-      auction_id: lot.auction_id,
-      action_type: "lot_no_interest",
-      payload: { lot_id, player_id: lot.player_id },
-    })
+    const { error } = await supabase
+      .rpc("rpc_conclude_lot_no_winner", { p_lot_id: lot_id, p_log_action: "lot_no_interest" })
+      .single<{ next_bidder_id: string | null }>()
+    if (error) return err(error.message)
     return NextResponse.json({ concluded: true, reason: "no_interest" })
   }
 
@@ -702,26 +700,10 @@ async function handleReturnToPool(request: NextRequest) {
   const { lot_id } = await request.json()
   if (!lot_id) return err("lot_id required.")
 
-  const { data: lot } = await supabase
-    .from("auction_lots")
-    .select("phase, auction_id, player_id")
-    .eq("id", lot_id).single()
-  if (!lot) return err("Lot not found.", 404)
-  if (!["interest", "bidding"].includes(lot.phase)) {
-    return err("Lot is not open.")
-  }
-
-  const { error: lotErr } = await supabase
-    .from("auction_lots")
-    .update({ phase: "concluded", current_turn_team_id: null })
-    .eq("id", lot_id)
-  if (lotErr) return err(lotErr.message)
-
-  await supabase.from("auction_log").insert({
-    auction_id: lot.auction_id,
-    action_type: "lot_returned_to_pool",
-    payload: { lot_id, player_id: lot.player_id },
-  })
+  const { error } = await supabase
+    .rpc("rpc_conclude_lot_no_winner", { p_lot_id: lot_id, p_log_action: "lot_returned_to_pool" })
+    .single<{ next_bidder_id: string | null }>()
+  if (error) return err(error.message)
 
   return NextResponse.json({ success: true })
 }
