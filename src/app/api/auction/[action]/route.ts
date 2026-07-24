@@ -269,17 +269,21 @@ async function handleOpenLot(request: NextRequest) {
       .eq("player_id", player_id)
       .in("status", ["locked"])
 
-    const { data: postWindowAuction } = await supabase
+    // Re-draft gate keys off a post-JANUARY auction only (post-summer does not
+    // open it). Moot in practice for the initial auction — it is always the
+    // season's first, so there are no prior drops — but kept consistent with
+    // the declare-interest path.
+    const { data: postJanAuction } = await supabase
       .from("auctions")
       .select("id")
-      .in("type", ["post_jan", "post_summer"])
+      .eq("type", "post_jan")
       .in("status", ["active", "completed"])
       .limit(1)
       .maybeSingle()
 
     const bannedTeamIds = new Set(
       (redraftBans ?? [])
-        .filter(d => d.dropped_post_summer || d.dropped_post_january || !postWindowAuction)
+        .filter(d => d.dropped_post_summer || d.dropped_post_january || !postJanAuction)
         .map(d => d.team_id)
     )
 
@@ -384,6 +388,21 @@ async function handleDeclareInterest(request: NextRequest) {
 
   // Re-draft restriction: check if this team previously dropped this player
   if (is_interested) {
+    // Same-window rule: a team can never re-sign a player it dropped in THIS
+    // auction — whether staged mid-auction or locked at start, and regardless
+    // of auction type. A drop resets the player's price to 50%, so re-buying
+    // in the same window would be a pure budget exploit.
+    const { data: sameWindowDrop } = await supabase
+      .from("team_drops")
+      .select("id")
+      .eq("team_id", profile.team_id)
+      .eq("player_id", lot.player_id)
+      .eq("auction_id", lot.auction_id)
+      .maybeSingle()
+    if (sameWindowDrop) {
+      return err("You cannot re-sign a player you dropped in this same auction.")
+    }
+
     const { data: drop } = await supabase
       .from("team_drops")
       .select("dropped_post_january, dropped_post_summer")
@@ -393,15 +412,18 @@ async function handleDeclareInterest(request: NextRequest) {
       .maybeSingle()
 
     if (drop) {
-      const { data: postWindowAuction } = await supabase
+      // Re-draft gate: a player dropped before January (initial auction or a
+      // regular mini) only becomes re-draftable once a post-JANUARY auction
+      // exists. The post-summer auction does NOT open the gate.
+      const { data: postJanAuction } = await supabase
         .from("auctions")
         .select("id")
-        .in("type", ["post_jan", "post_summer"])
+        .eq("type", "post_jan")
         .in("status", ["active", "completed"])
         .limit(1)
         .maybeSingle()
 
-      const eligibilityError = checkReDraftEligibility(drop, !!postWindowAuction)
+      const eligibilityError = checkReDraftEligibility(drop, !!postJanAuction)
       if (eligibilityError) {
         return err(eligibilityError)
       }

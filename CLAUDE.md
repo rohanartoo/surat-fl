@@ -53,10 +53,11 @@ Tech stack: Next.js 16 (App Router), Supabase (Postgres + Auth + Realtime), Tail
 - Excess drops: −4 pts per drop above free quota, deducted at end of the gameweek.
 
 ### Re-draft restrictions
-1. **Same-window**: cannot re-sign a player dropped in the same auction window.
-2. **Pre-Jan**: player dropped before January can only be re-drafted after the first January auction starts.
-3. **Post-Jan**: player dropped after January opens can never be re-signed that season.
-4. **Post-summer**: player dropped after post-summer window can never be re-signed that season.
+Season auction order: **initial → post-summer (end-Aug window) → minis → post-January → minis**.
+1. **Same-window**: cannot re-sign a player dropped in the **same auction** (any type). Enforced by an auction_id match in `handleDeclareInterest` (and the initial auto-enroll), independent of the gate/permanent rules below.
+2. **Pre-Jan gate**: a player dropped before January (initial auction or a regular mini — i.e. neither post-summer nor post-January) can only be re-drafted **from the post-January auction onward**. Post-summer does **not** open this gate. The gate keys off a `post_jan` auction being active/completed (`checkReDraftEligibility`).
+3. **Post-Jan**: player dropped in a post-January auction can never be re-signed that season (permanent).
+4. **Post-summer**: player dropped in a post-summer auction can never be re-signed that season (permanent).
 
 ### Scoring
 - Real FPL points for starting XI. Auto-sub rules: non-playing starters replaced by bench in priority order, formation minimums respected.
