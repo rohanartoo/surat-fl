@@ -24,11 +24,11 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { action } = await params
   try {
     switch (action) {
-      case "swap":             return handleSwap(request)
-      case "set-captain":     return handleSetCaptain(request)
-      case "mark-drop":       return handleMarkDrop(request)
-      case "return-from-drop": return handleReturnFromDrop(request)
-      case "update-name":     return handleUpdateName(request)
+      case "swap":             return await handleSwap(request)
+      case "set-captain":     return await handleSetCaptain(request)
+      case "mark-drop":       return await handleMarkDrop(request)
+      case "return-from-drop": return await handleReturnFromDrop(request)
+      case "update-name":     return await handleUpdateName(request)
       default:
         return err(`Unknown action: ${action}`, 404)
     }

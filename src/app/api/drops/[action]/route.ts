@@ -21,9 +21,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { action } = await params
   try {
     switch (action) {
-      case "quota":          return handleQuota(request)
-      case "staged-counts":  return handleStagedCounts(request)
-      case "staged-detail":  return handleStagedDetail(request)
+      case "quota":          return await handleQuota(request)
+      case "staged-counts":  return await handleStagedCounts(request)
+      case "staged-detail":  return await handleStagedDetail(request)
       default:               return err(`Unknown action: ${action}`, 404)
     }
   } catch (e) {
