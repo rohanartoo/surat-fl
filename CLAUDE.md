@@ -52,12 +52,16 @@ Tech stack: Next.js 16 (App Router), Supabase (Postgres + Auth + Realtime), Tail
 
 - Excess drops: −4 pts per drop above free quota, deducted at end of the gameweek.
 
-### Re-draft restrictions
+### Drops & re-draft restrictions
 Season auction order: **initial → post-summer (end-Aug window) → minis → post-January → minis**.
-1. **Same-window**: cannot re-sign a player dropped in the **same auction** (any type). Enforced by an auction_id match in `handleDeclareInterest` (and the initial auto-enroll), independent of the gate/permanent rules below.
-2. **Pre-Jan gate**: a player dropped before January (initial auction or a regular mini — i.e. neither post-summer nor post-January) can only be re-drafted **from the post-January auction onward**. Post-summer does **not** open this gate. The gate keys off a `post_jan` auction being active/completed (`checkReDraftEligibility`).
-3. **Post-Jan**: player dropped in a post-January auction can never be re-signed that season (permanent).
-4. **Post-summer**: player dropped in a post-summer auction can never be re-signed that season (permanent).
+
+- **No drops in the initial auction** — teams start empty, so there is nothing to drop. `handleMarkDrop` rejects drops when the current auction is `initial`.
+- The re-draft rule pivots on the **post-January window (≈ Feb 1)**, modeled by whether a `post_jan` auction is under way / has completed:
+  1. A player dropped **in or after** the post-January window can **never** be re-drafted by the **same team** that season (permanent). At drop time `handleMarkDrop` sets `dropped_post_january = true` when the current auction is `post_jan` **or** a `post_jan` auction has already completed.
+  2. A player dropped **before** the post-January window can be re-drafted **by the same team from the post-January auction onward** — the gate keys off a `post_jan` auction being active/completed (`checkReDraftEligibility`).
+  3. **Same-window**: independently, a team can never re-sign a player it dropped in the **same auction** (auction_id match in `handleDeclareInterest` / the initial auto-enroll).
+- A **different** team is never restricted from re-drafting a player someone else dropped.
+- `team_drops.dropped_post_summer` is retained for history but **no longer affects eligibility** — a post-summer drop is a pre-January drop.
 
 ### Scoring
 - Real FPL points for starting XI. Auto-sub rules: non-playing starters replaced by bench in priority order, formation minimums respected.

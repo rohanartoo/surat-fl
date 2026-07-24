@@ -92,25 +92,29 @@ describe("checkReDraftEligibility", () => {
     expect(result).toBeNull()
   })
 
-  it("blocks re-drafting permanently if dropped post-summer", () => {
-    const drop = { dropped_post_january: false, dropped_post_summer: true }
-    const result = checkReDraftEligibility(drop, false)
-    expect(result).toBe("You cannot re-draft a player you dropped after the post-summer transfer window. This restriction is permanent for this season.")
-  })
-
-  it("blocks re-drafting permanently if dropped post-january", () => {
+  it("blocks re-drafting permanently if dropped in/after the post-january window", () => {
     const drop = { dropped_post_january: true, dropped_post_summer: false }
     const result = checkReDraftEligibility(drop, false)
-    expect(result).toBe("You cannot re-draft a player you dropped after the post-January transfer window. This restriction is permanent for this season.")
+    expect(result).toBe("You cannot re-draft a player you dropped in or after the post-January transfer window. This restriction is permanent for this season.")
   })
 
-  it("blocks pre-january drop re-drafting if no post-window auction has occurred yet", () => {
+  it("treats a post-summer drop as a pre-january drop (not permanent)", () => {
+    // dropped_post_summer no longer affects eligibility; only the gate applies.
+    const dropBeforeGate = { dropped_post_january: false, dropped_post_summer: true }
+    expect(checkReDraftEligibility(dropBeforeGate, false)).toBe(
+      "You cannot re-draft this player yet. Players dropped before the post-January window can only be re-drafted from the post-January auction onwards."
+    )
+    const dropAfterGate = { dropped_post_january: false, dropped_post_summer: true }
+    expect(checkReDraftEligibility(dropAfterGate, true)).toBeNull()
+  })
+
+  it("blocks pre-january drop re-drafting until the post-january auction exists", () => {
     const drop = { dropped_post_january: false, dropped_post_summer: false }
     const result = checkReDraftEligibility(drop, false)
-    expect(result).toBe("You cannot re-draft a player you dropped. Re-drafting is only allowed from the post-January transfer window auction onwards.")
+    expect(result).toBe("You cannot re-draft this player yet. Players dropped before the post-January window can only be re-drafted from the post-January auction onwards.")
   })
 
-  it("allows pre-january drop re-drafting once a post-window auction has occurred", () => {
+  it("allows pre-january drop re-drafting once the post-january auction exists", () => {
     const drop = { dropped_post_january: false, dropped_post_summer: false }
     const result = checkReDraftEligibility(drop, true)
     expect(result).toBeNull()

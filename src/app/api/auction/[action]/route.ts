@@ -283,7 +283,7 @@ async function handleOpenLot(request: NextRequest) {
 
     const bannedTeamIds = new Set(
       (redraftBans ?? [])
-        .filter(d => d.dropped_post_summer || d.dropped_post_january || !postJanAuction)
+        .filter(d => d.dropped_post_january || !postJanAuction)
         .map(d => d.team_id)
     )
 

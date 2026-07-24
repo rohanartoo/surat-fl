@@ -99,12 +99,13 @@ Pick **one participant** and have them do this on their device (Team page):
 ---
 
 > ## Re-draft rules in force for this run
-> These phases run the auctions **in real-season order: Post-summer → Mini → Post-January**. The re-draft rules were reviewed and the code fixed to match your decisions:
-> 1. **Same-window is blocked** — a team can never re-sign a player it dropped in the *same* auction (any type). A drop resets that player's price to 50%, so this closes a budget exploit.
-> 2. **Re-draft gate opens at post-January only** — a player dropped in the initial auction (or a regular pre-Jan mini) stays locked through post-summer and the autumn minis, and only becomes re-draftable from the **post-January** auction onward. Post-summer does **not** open the gate.
-> 3. **Permanent bans** — a player dropped in a **post-summer** or **post-January** auction can never be re-signed that season.
+> Auctions run in real-season order: **Post-summer → Mini → Post-January**. (There are **no drops in the initial auction** — teams start empty, so dropping there is blocked.) The rule pivots on the **post-January window (≈ Feb 1)**:
+> 1. **Dropped before post-January** (post-summer drop, or a pre-Jan mini drop) → re-draftable **by the same team from the post-January auction onward**. Blocked until then.
+> 2. **Dropped in or after post-January** (the post-Jan auction itself, or any later mini) → **never** re-draftable by the same team that season.
+> 3. **Same-window** → a team can never re-sign a player it dropped in the *same* auction (a drop resets the price to 50%, so this closes a budget exploit).
+> 4. A **different** team can always re-draft a player someone else dropped.
 >
-> The steps below assert this fixed behavior. If any check behaves differently, that's a real bug — log it.
+> The steps below assert this. If any check behaves differently, log it.
 
 ## Phase 4 — Post-summer auction (first in-season, 3 free drops)
 
@@ -128,8 +129,8 @@ Pick **two of your five** participants — **Team A** (within quota) and **Team 
 - [ ] Buy Team A and Team B back to 15. **End Draft.**
 
 ### 4c. Re-draft checks
-- [ ] **Post-summer permanent ban:** confirm a team **cannot** re-sign a player it dropped in **this** post-summer auction — try it, expect a block. Note this player; you'll re-test the ban in Phases 5 & 6.
-- [ ] **Gate still closed:** have a team try to re-sign a player it dropped back in the **initial** auction. Expect it to be **blocked** — the gate doesn't open until the post-January auction (Phase 6). Message should say re-drafting is only allowed from the post-January window onward.
+- [ ] **No drops in the initial auction:** as a sanity check, note that no team had the option to drop during Phase 1 — the post-summer auction is the **first** time dropping is possible.
+- [ ] **Same-window / gate closed:** have a team that dropped a player in **this** post-summer auction try to re-sign that same player now. Expect a **block** (it's the same auction, and the post-January gate isn't open). Note this player — call them **"the post-summer drop"**; you'll re-test in Phases 5 and 6.
 
 ### 4d. Drop penalty
 - [ ] On your **admin** screen, simulate the **next gameweek**. Confirm **Team B** (4 drops, 1 over quota) takes a **−4** penalty and **Team A** (within quota) does not. Confirm it shows in the GW breakdown and standings.
@@ -146,10 +147,10 @@ Recurring in-season transfer auction. Gives **2 free drops** (excess = −4 each
 
 ### 5b. Same-window re-draft (the key check)
 - [ ] Have **Team A** drop a player, start/commit, then have Team A try to **re-sign that same player in this same mini**. Expect a **block** — "You cannot re-sign a player you dropped in this same auction."
-- [ ] **Still gated:** have a team try to re-sign a player it dropped in the **initial** auction. Still **blocked** (post-January hasn't happened yet).
 
-### 5c. Permanent-ban still holds
-- [ ] Have a team try to re-sign the **post-summer-dropped** player from Phase 4c. Confirm it's **still blocked** (permanent).
+### 5c. Gate still closed (pre-January)
+- [ ] Have the team that made **"the post-summer drop"** (Phase 4c) try to re-sign that player now, in this mini. Still **blocked** — the post-January auction hasn't happened yet, so the gate is closed. Message should mention re-drafting is only allowed from the post-January window onward.
+- [ ] **Different-team check:** have a *different* team try to sign that same post-summer-dropped player. It should be **allowed** — the restriction only applies to the team that dropped him.
 
 ### 5d. Finish
 - [ ] Buy affected teams back to 15. **End Draft.**
@@ -161,11 +162,12 @@ Recurring in-season transfer auction. Gives **2 free drops** (excess = −4 each
 Real timing: after the January window closes (early February). Gives **3 free drops**.
 
 - [ ] Create a **Post-Jan** auction (order = your 5 teams). Confirm quota is **3**.
-- [ ] Run a drop → commit → re-draft → end-draft loop.
-- [ ] **Gate now OPEN:** have a team re-sign a player it dropped in the **initial** auction (the one that was blocked in Phases 4 & 5). It should now **succeed** — the post-January auction opened the gate. *(This is the key check that the gate opens at the right time.)*
-- [ ] **Post-January permanent ban:** drop a player in **this** auction, then confirm no team can re-sign them here or in any later auction.
-- [ ] Confirm the **post-summer** permanent ban from Phase 4 *still* holds.
+- [ ] **Gate now OPEN — the key check:** have the team that made **"the post-summer drop"** (Phases 4–5) re-sign that player now. It should **succeed** — reaching the post-January auction opens the gate for pre-January drops. *(This is the whole point of the gate timing.)*
+- [ ] **Post-January permanent ban:** have a team drop a player in **this** post-Jan auction, then confirm that team can **never** re-sign them — not here, and not in a later mini. (A *different* team still could.)
 - [ ] **Same-window still blocked:** confirm a team can't re-sign a player it dropped in **this** post-Jan auction.
+- [ ] Finish the drop → commit → re-draft → end-draft loop and **End Draft**.
+
+> **Optional — post-Feb permanence:** if you run one more **Mini** auction after this, confirm a player dropped in *that* post-January-era mini is also **permanently** un-re-draftable by the same team (anything dropped once the post-January auction has happened is permanent).
 
 ---
 

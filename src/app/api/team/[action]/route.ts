@@ -175,6 +175,16 @@ async function handleMarkDrop(request: NextRequest) {
   // Find the current active auction (for the team_drops foreign key)
   const auction = await getCurrentAuction<{ id: string; type: string }>(supabase, "id, type")
   if (!auction) return err("No active auction — drops can only be staged during an auction window.")
+  // Teams have no squad to drop from during the initial draft.
+  if (auction.type === "initial") return err("Players cannot be dropped during the initial auction.")
+
+  // A drop is permanent (never re-draftable by the same team) when it is made
+  // in or after the post-January window — i.e. this is the post-January
+  // auction, or a post-January auction has already completed. Anything dropped
+  // before then is re-draftable from the post-January auction onward.
+  const { data: priorPostJan } = await supabase
+    .from("auctions").select("id").eq("type", "post_jan").eq("status", "completed").limit(1).maybeSingle()
+  const isPermanentDrop = auction.type === "post_jan" || !!priorPostJan
 
   const dropPrice = calcDropPrice(entry.base_price)
 
@@ -186,15 +196,17 @@ async function handleMarkDrop(request: NextRequest) {
     is_vice_captain: false,
   }).eq("id", entry_id)
 
-  // Create staged drop record
+  // Create staged drop record. dropped_post_summer is kept for history only —
+  // it no longer affects re-draft eligibility (a post-summer drop is a
+  // pre-January drop).
   await supabase.from("team_drops").insert({
     team_id: entry.team_id,
     player_id: entry.player_id,
     auction_id: auction.id,
     drop_price: dropPrice,
     status: "staged",
-    dropped_post_january: auction.type === "post_jan",
-    dropped_post_summer: auction.type === "post_summer",
+    dropped_post_january: isPermanentDrop,
+    dropped_post_summer: false,
   })
 
   return NextResponse.json({ success: true, drop_price: dropPrice })

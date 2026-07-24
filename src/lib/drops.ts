@@ -73,30 +73,31 @@ export async function lockAndCommitDrops(
 }
 
 /**
- * Checks if a team is eligible to re-draft a player they previously dropped
- * (in an auction OTHER than the current one — same-auction re-signs are
- * blocked separately by the caller). Returns null if allowed, or an error
- * message string if blocked.
+ * Checks whether a team may re-draft a player it previously dropped (in an
+ * auction OTHER than the current one — same-auction re-signs are blocked
+ * separately by the caller). Returns null if allowed, or an error message.
  *
- * `postJanAuctionExists` — whether a post-January auction has started or
- * completed. Players dropped before January (initial auction or a regular
- * mini, i.e. neither post-summer nor post-January) only become re-draftable
- * once that gate is open. Post-summer does NOT open it.
+ * Rule (pivots on the post-January / Feb-1 window):
+ *  - Dropped **in or after** the post-January window → permanent for the
+ *    season (`dropped_post_january` is set true at drop time in that case).
+ *  - Dropped **before** it → re-draftable only once the post-January auction
+ *    has started (`postJanAuctionExists`).
+ *
+ * `dropped_post_summer` is retained on the record for history but no longer
+ * affects eligibility: a post-summer drop is a pre-January drop and becomes
+ * re-draftable from the post-January auction like any other.
  */
 export function checkReDraftEligibility(
-  drop: { dropped_post_january: boolean; dropped_post_summer: boolean } | null,
+  drop: { dropped_post_january: boolean; dropped_post_summer?: boolean } | null,
   postJanAuctionExists: boolean
 ): string | null {
   if (!drop) return null
 
-  if (drop.dropped_post_summer) {
-    return "You cannot re-draft a player you dropped after the post-summer transfer window. This restriction is permanent for this season."
-  }
   if (drop.dropped_post_january) {
-    return "You cannot re-draft a player you dropped after the post-January transfer window. This restriction is permanent for this season."
+    return "You cannot re-draft a player you dropped in or after the post-January transfer window. This restriction is permanent for this season."
   }
   if (!postJanAuctionExists) {
-    return "You cannot re-draft a player you dropped. Re-drafting is only allowed from the post-January transfer window auction onwards."
+    return "You cannot re-draft this player yet. Players dropped before the post-January window can only be re-drafted from the post-January auction onwards."
   }
 
   return null
