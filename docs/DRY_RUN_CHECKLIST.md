@@ -116,13 +116,15 @@ Pick **two of your five** participants — **Team A** (within quota) and **Team 
 ### 4a. Stage drops
 - [ ] On **auction_master**, create a **Post-Summer** auction. Set order — **include the 5 playing teams**.
 - [ ] Confirm the free-drop quota shown is **3** (not 2).
-- [ ] Have **Team A** drop **2 players** (**Mark for Drop**). Confirm each shows staged, drop price = **ceil(purchase × 0.5)**, min £1m.
+- [ ] Have **Team A** drop **2 players** (**Mark for Drop**). Confirm each shows staged, drop price = **ceil(purchase × 0.5)**, min £1m — that's the price the *next buyer* pays, unrelated to what Team A gets back.
+- [ ] **Provisional budget:** on Team A's screen, confirm the budget bar shows a **provisional** figure equal to real budget + the **full original purchase price** of both staged drops (not the halved drop price), labeled "provisional budget (drops not locked in yet)." Confirm Team A's *real* budget hasn't changed yet.
 - [ ] Have **Team B** drop **4 players** — one over the quota of 3 — for the penalty test.
-- [ ] Have Team A **Return from Drop** one, then re-drop it. Confirm the count is right.
+- [ ] Have Team A **Return from Drop** one, then re-drop it. Confirm the count is right, and confirm the provisional budget figure drops back down (and back up) by that player's full purchase price each time.
 - [ ] Confirm a team **cannot** stage a drop with no auction window open (try before creating the auction).
+- [ ] Confirm a team **cannot** stage (or return) a drop once the auction is **Live** — staging is only allowed while the auction is *pending*, before AM clicks Start. If a team wants to drop someone else, that waits for the next auction.
 
 ### 4b. Commit & re-draft
-- [ ] AM **Starts** the auction. Confirm each dropped player's roster slot is **freed**.
+- [ ] AM **Starts** the auction. Confirm each dropped player's roster slot is **freed**, and Team A's / Team B's **real** budget bar now shows the credited amount (their provisional figure from 4a becomes the real, spendable budget) — no more "provisional" label.
 - [ ] AM advances to the dropped position(s) and nominates replacements. Confirm only teams **with an open slot at that position** can declare interest.
 - [ ] Run the **interest phase**: teams **declare interest / pass**, then AM **Closes Interest & Starts Bidding**.
 - [ ] Confirm a lot with a **single interested team** awards at **base price** without a bidding round.
