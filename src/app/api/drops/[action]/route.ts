@@ -35,11 +35,14 @@ export async function POST(request: NextRequest, { params }: Params) {
 }
 
 // ─────────────────────────────────────────────
-// STAGED-COUNTS — staged drop counts per team for an auction (AM view)
+// STAGED-COUNTS — staged drop counts per team for an auction
+// Visible to everyone (any logged-in role, including team accounts and
+// guests) so teams can see how much drop activity is happening before an
+// auction locks in — deliberately not scoped to auction_master.
 // Body: { auction_id: string }
 // ─────────────────────────────────────────────
 async function handleStagedCounts(request: NextRequest) {
-  await requireRole("auction_master")
+  await requireRole("guest")
   const supabase = createClient()
   const { auction_id } = await request.json()
   if (!auction_id) return err("auction_id required.")
@@ -59,11 +62,13 @@ async function handleStagedCounts(request: NextRequest) {
 }
 
 // ─────────────────────────────────────────────
-// STAGED-DETAIL — full player details for staged drops, grouped by team (AM/admin view)
+// STAGED-DETAIL — full player details for staged drops, grouped by team.
+// Visible to everyone (see handleStagedCounts) — this is what powers the
+// team-facing "who's dropped what" panel, not just the AM's.
 // Body: { auction_id: string }
 // ─────────────────────────────────────────────
 async function handleStagedDetail(request: NextRequest) {
-  await requireRole("auction_master")
+  await requireRole("guest")
   const supabase = createClient()
   const { auction_id } = await request.json()
   if (!auction_id) return err("auction_id required.")

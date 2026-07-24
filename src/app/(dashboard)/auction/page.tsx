@@ -7,6 +7,7 @@ import { TeamBidConsole, MyActionPanel } from "@/components/auction/TeamBidConso
 import { PlayerSelectionPanel } from "@/components/auction/PlayerSelectionPanel"
 import { AuctionLog } from "@/components/auction/AuctionLog"
 import { BidResultPanel } from "@/components/auction/BidResultPanel"
+import { StagedDropsPanel } from "@/components/auction/StagedDropsPanel"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import type {
@@ -189,9 +190,10 @@ export default async function AuctionPage() {
             )}
           </div>
 
-          {/* Right: AM controls → log → last result → bid rows (teams + guests see bids here) */}
+          {/* Right: AM controls → staged drops (all roles) → log → last result → bid rows (teams + guests see bids here) */}
           <div className="space-y-4">
             <AuctionMasterControls />
+            <StagedDropsPanel />
             <AuctionLog />
             <BidResultPanel />
             {(myRole === "team" || myRole === "guest") && (

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useAuction } from "./AuctionProvider"
 import { useApiAction } from "@/hooks/useApiAction"
 import { Button } from "@/components/ui/button"
@@ -23,28 +23,6 @@ export function AuctionMasterControls() {
   const [confirmEndDraft, setConfirmEndDraft] = useState(false)
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
   const [excludedTeamIds, setExcludedTeamIds] = useState<string[]>([])
-
-  type StagedTeam = { team_id: string; display_name: string; short_name: string; color: string; drops: { player_id: number; web_name: string; position: string }[] }
-  const [stagedDropTeams, setStagedDropTeams] = useState<StagedTeam[]>([])
-
-  // Fetch staged drop details when auction is pending and non-initial
-  useEffect(() => {
-    if (!auction || auction.status !== "pending" || auction.type === "initial") {
-      setStagedDropTeams([])
-      return
-    }
-    const controller = new AbortController()
-    fetch("/api/drops/staged-detail", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ auction_id: auction.id }),
-      signal: controller.signal,
-    })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => { if (data) setStagedDropTeams(data.teams ?? []) })
-      .catch(e => { if (e?.name !== "AbortError") console.error("Failed to fetch staged drops:", e) })
-    return () => controller.abort()
-  }, [auction?.id])
 
   if (!roleIsAM(myRole)) return null
 
@@ -286,36 +264,6 @@ export function AuctionMasterControls() {
                     className="text-muted-foreground hover:text-foreground text-xs px-1"
                     onClick={() => addTeamBack(team.id)}
                   >+ Add back</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Staged drops detail for non-initial auctions */}
-        {auction.type !== "initial" && stagedDropTeams.length > 0 && (
-          <div className="mb-3">
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1.5">
-              Staged drops ({stagedDropTeams.reduce((s, t) => s + t.drops.length, 0)} total)
-            </p>
-            <div className="space-y-2">
-              {stagedDropTeams.map(team => (
-                <div key={team.team_id} className="rounded bg-secondary/40 px-2 py-1.5">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
-                      <span className="text-xs font-medium">{team.short_name}</span>
-                    </div>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1 tabular-nums">{team.drops.length}</Badge>
-                  </div>
-                  <div className="space-y-0.5 pl-3.5">
-                    {team.drops.map(p => (
-                      <div key={p.player_id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <span className="font-mono text-[10px] text-muted-foreground/60 uppercase w-7">{p.position}</span>
-                        <span>{p.web_name}</span>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               ))}
             </div>
