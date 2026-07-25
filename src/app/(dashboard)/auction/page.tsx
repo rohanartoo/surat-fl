@@ -85,7 +85,7 @@ async function getPageData() {
   const draftedIds = (draftedRows ?? []).map(r => r.player_id) as number[]
   const currentPos = (auction?.current_position_category ?? null) as Position | null
 
-  let playersQuery = supabase.from("players").select("*").order("total_points", { ascending: false })
+  let playersQuery = supabase.from("players").select("*").order("selected_by_percent", { ascending: false })
   if (draftedIds.length > 0) {
     playersQuery = playersQuery.not("id", "in", `(${draftedIds.join(",")})`)
   }
@@ -95,19 +95,26 @@ async function getPageData() {
   const { data: playersData } = await playersQuery
   const availablePlayers = (playersData ?? []) as Player[]
 
-  // Filled slot counts per team per position
+  // Filled slot counts per team per position, and per-team PL-club counts
+  // (the latter lets any team's screen show why another team is sitting out
+  // a lot — reached the 3-players-per-club cap — not just their own).
   const { data: allRosterEntries } = await supabase
-    .from("roster_entries").select("team_id, player:players(position)").in("slot_type", ["starting", "bench"])
+    .from("roster_entries").select("team_id, player:players(position, fpl_team)").in("slot_type", ["starting", "bench"])
 
   const filledSlotsByTeam: Record<string, Record<Position, number>> = {}
+  const clubCountsByTeam: Record<string, Record<string, number>> = {}
   for (const team of teams) {
     filledSlotsByTeam[team.id] = { GK: 0, DEF: 0, MID: 0, FWD: 0 }
   }
   for (const entry of allRosterEntries ?? []) {
-    const player = entry.player as unknown as { position: Position } | null
+    const player = entry.player as unknown as { position: Position; fpl_team: string } | null
     const pos = player?.position
     if (pos && filledSlotsByTeam[entry.team_id]) {
       filledSlotsByTeam[entry.team_id][pos]++
+    }
+    if (player?.fpl_team) {
+      if (!clubCountsByTeam[entry.team_id]) clubCountsByTeam[entry.team_id] = {}
+      clubCountsByTeam[entry.team_id][player.fpl_team] = (clubCountsByTeam[entry.team_id][player.fpl_team] ?? 0) + 1
     }
   }
 
@@ -120,6 +127,7 @@ async function getPageData() {
     teams,
     availablePlayers,
     filledSlotsByTeam,
+    clubCountsByTeam,
     myTeamId: profile?.team_id ?? null,
     myRole: (profile?.role ?? "guest") as Role,
   }
@@ -135,6 +143,7 @@ export default async function AuctionPage() {
     teams,
     availablePlayers,
     filledSlotsByTeam,
+    clubCountsByTeam,
     myTeamId,
     myRole,
   } = await getPageData()
@@ -151,6 +160,7 @@ export default async function AuctionPage() {
       initialTeams={teams}
       initialAvailablePlayers={availablePlayers}
       initialFilledSlotsByTeam={filledSlotsByTeam}
+      initialClubCountsByTeam={clubCountsByTeam}
       myTeamId={myTeamId}
       myRole={myRole}
     >

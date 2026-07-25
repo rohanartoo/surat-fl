@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useAuction } from "./AuctionProvider"
 import { useApiAction } from "@/hooks/useApiAction"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -16,7 +16,7 @@ import { SQUAD_RULES } from "@/types"
 // ── Per-team row ──────────────────────────────────────────────────────────────
 
 function TeamBidRow({
-  team, bid, phase, filledSlots, position, isCurrentTurn,
+  team, bid, phase, filledSlots, position, isCurrentTurn, isClubCapped,
 }: {
   team: LeagueTeam
   bid: Bid | undefined
@@ -24,27 +24,38 @@ function TeamBidRow({
   filledSlots: number
   position: Position
   isCurrentTurn: boolean
+  isClubCapped: boolean
 }) {
-  const isFull = filledSlots >= SQUAD_RULES.slots[position]
+  const maxSlots = SQUAD_RULES.slots[position]
+  const isFull = filledSlots >= maxSlots
   const isFolded = bid?.is_folded
   const isInterested = bid?.is_interested
   const notInterested = bid !== undefined && !isInterested
+  // A capped/full team with no bid row never got a turn this lot at all —
+  // that's the "skipped, but why?" case the position/club badges explain.
+  const wasSkipped = bid === undefined && (isFull || isClubCapped)
 
   return (
     <div className={cn(
       "flex items-center justify-between py-2 px-3 rounded-md transition-colors",
       isCurrentTurn && "bg-amber-500/15 ring-2 ring-amber-500/50",
-      (isFull || isFolded || notInterested) && "opacity-40",
+      (isFull || isFolded || notInterested || wasSkipped) && "opacity-40",
     )}>
       <div className="flex items-center gap-2">
         <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
         <span className="text-sm font-medium">{team.short_name}</span>
+        <span className="text-[10px] font-mono text-muted-foreground/70">{filledSlots}/{maxSlots}</span>
         {isCurrentTurn && phase === "bidding" && (
           <Badge variant="outline" className="text-[10px] h-4 px-1 text-amber-500 border-amber-500/40 animate-pulse">
             Turn
           </Badge>
         )}
         {isFull && <Badge variant="secondary" className="text-[10px] h-4 px-1">Full</Badge>}
+        {isClubCapped && (
+          <Badge variant="outline" className="text-[10px] h-4 px-1 text-amber-500 border-amber-500/40">
+            Club cap
+          </Badge>
+        )}
         {isFolded && <Badge variant="outline" className="text-[10px] h-4 px-1 text-muted-foreground">Folded</Badge>}
         {notInterested && phase === "interest" && (
           <Badge variant="outline" className="text-[10px] h-4 px-1 text-muted-foreground">Passed</Badge>
@@ -72,7 +83,7 @@ function TeamBidRow({
 // ── My action panel ───────────────────────────────────────────────────────────
 
 function MyBidPanel({
-  myTeam, myBid, currentBid, basePrice, myFilledSlots, lotId, phase, isMyTurn, currentBidderId, myTeamId, isClubCapped, clubName, isPositionFull, onAction,
+  myTeam, myBid, currentBid, basePrice, myFilledSlots, lotId, phase, isMyTurn, isClubCapped, clubName, isPositionFull, onAction,
 }: {
   myTeam: LeagueTeam
   myBid: Bid | undefined
@@ -82,31 +93,42 @@ function MyBidPanel({
   lotId: string
   phase: "interest" | "bidding"
   isMyTurn: boolean
-  currentBidderId: string | null
-  myTeamId: string
   isClubCapped: boolean
   clubName: string
   isPositionFull: boolean
   onAction: () => Promise<void>
 }) {
   const [bidAmount, setBidAmount] = useState("")
+  const [pendingAction, setPendingAction] = useState<"bid" | "fold" | null>(null)
   const { post: apiPost, loading, error, setError } = useApiAction("/api/auction")
 
-  useEffect(() => {
+  // Reset per-lot input state when the bid changes out from under us (a new
+  // high bid landed, or a new lot opened) — adjusting state during render
+  // rather than in an effect, per React's guidance for "state that resets
+  // when a prop changes" (avoids the extra cascading-render pass an effect
+  // would cause).
+  const [prevCurrentBid, setPrevCurrentBid] = useState(currentBid)
+  if (currentBid !== prevCurrentBid) {
+    setPrevCurrentBid(currentBid)
     setBidAmount("")
+    setPendingAction(null)
     setError(null)
-  }, [currentBid, setError])
+  }
 
   async function post(action: string, body: object) {
     const ok = await apiPost(action, body)
     if (ok) await onAction()
+    setPendingAction(null)
   }
 
   const emptySlots = SQUAD_RULES.total - myFilledSlots
   const minBid = getMinNextBid(currentBid, basePrice)
   const maxBid = getMaxBid(myTeam.budget, emptySlots)
   const isFolded = myBid?.is_folded
-  const canUndo = myBid?.amount != null && currentBidderId === myTeamId && !isMyTurn
+  // A team with no bid row at all was never eligible for this lot (club cap
+  // or position full) — worth surfacing plainly instead of a plain "waiting"
+  // message that implies a turn is still coming.
+  const wasSkipped = myBid === undefined && (isClubCapped || isPositionFull)
 
   // ── Interest phase ──────────────────────────────────────────────────────────
   if (phase === "interest") {
@@ -156,18 +178,70 @@ function MyBidPanel({
     if (!isMyTurn) {
       return (
         <div className="space-y-3 p-4 rounded-lg border border-border/60 bg-secondary/80">
-          <p className="text-sm text-muted-foreground italic">Waiting for other team to bid or fold…</p>
-          {canUndo && (
+          {wasSkipped ? (
+            <p className="text-sm text-muted-foreground italic">
+              You were skipped for this lot — {isClubCapped
+                ? `you already have ${SQUAD_RULES.max_per_club} players from ${clubName}.`
+                : "your position slots are full."}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">Waiting for other team to bid or fold…</p>
+          )}
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+      )
+    }
+
+    const parsedAmount = parseInt(bidAmount, 10)
+
+    if (pendingAction === "bid") {
+      return (
+        <div className="space-y-3 p-4 rounded-lg border border-amber-500/50 bg-amber-500/10">
+          <p className="text-sm font-semibold text-amber-500">Confirm bid of {formatMoney(parsedAmount)}?</p>
+          <div className="flex gap-2">
+            <Button
+              className="flex-1"
+              disabled={loading}
+              onClick={() => post("place-bid", { lot_id: lotId, amount: parsedAmount })}
+            >
+              Confirm bid
+            </Button>
             <Button
               variant="outline"
-              size="sm"
-              className="w-full text-muted-foreground"
+              className="flex-1"
               disabled={loading}
-              onClick={() => post("undo-bid", { lot_id: lotId })}
+              onClick={() => setPendingAction(null)}
             >
-              Undo my bid ({myBid?.amount != null ? formatMoney(myBid.amount) : ""})
+              Cancel
             </Button>
-          )}
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+      )
+    }
+
+    if (pendingAction === "fold") {
+      return (
+        <div className="space-y-3 p-4 rounded-lg border border-destructive/50 bg-destructive/10">
+          <p className="text-sm font-semibold text-destructive">Fold on this player?</p>
+          <div className="flex gap-2">
+            <Button
+              variant="destructive"
+              className="flex-1"
+              disabled={loading}
+              onClick={() => post("fold", { lot_id: lotId })}
+            >
+              Confirm fold
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1"
+              disabled={loading}
+              onClick={() => setPendingAction(null)}
+            >
+              Cancel
+            </Button>
+          </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       )
@@ -199,12 +273,8 @@ function MyBidPanel({
           </div>
           <Button
             className="w-16 shrink-0"
-            disabled={loading || !bidAmount}
-            onClick={() => {
-              const amount = parseInt(bidAmount, 10)
-              if (isNaN(amount)) return
-              post("place-bid", { lot_id: lotId, amount })
-            }}
+            disabled={loading || !bidAmount || isNaN(parsedAmount)}
+            onClick={() => setPendingAction("bid")}
           >
             Bid
           </Button>
@@ -213,7 +283,7 @@ function MyBidPanel({
           variant="outline"
           className="w-full text-muted-foreground hover:text-destructive hover:border-destructive/50"
           disabled={loading}
-          onClick={() => post("fold", { lot_id: lotId })}
+          onClick={() => setPendingAction("fold")}
         >
           Fold
         </Button>
@@ -268,7 +338,7 @@ export function MyActionPanel() {
 
   if (!currentLot || currentLot.phase === "concluded" || currentLot.phase === "pending") return null
 
-  const { phase, current_bid, current_bidder_id, player, id: lotId, current_turn_team_id } = currentLot
+  const { phase, current_bid, player, id: lotId, current_turn_team_id } = currentLot
   const position = player.position as Position
   const myTeam = teams.find(t => t.id === myTeamId)
   const myBid = bids.find(b => b.team_id === myTeamId)
@@ -288,8 +358,6 @@ export function MyActionPanel() {
       lotId={lotId}
       phase={phase as "interest" | "bidding"}
       isMyTurn={isMyTurn}
-      currentBidderId={current_bidder_id ?? null}
-      myTeamId={myTeamId}
       isClubCapped={isClubCapped}
       clubName={player.fpl_team}
       isPositionFull={isPositionFull}
@@ -301,7 +369,7 @@ export function MyActionPanel() {
 // ── Main bid status panel (team rows) ─────────────────────────────────────────
 
 export function TeamBidConsole() {
-  const { currentLot, bids, teams, myTeamId, myRole, filledSlotsByTeam, auction } = useAuction()
+  const { currentLot, bids, teams, myTeamId, myRole, filledSlotsByTeam, clubCountsByTeam, auction } = useAuction()
 
   if (!currentLot || currentLot.phase === "concluded" || currentLot.phase === "pending") {
     return (
@@ -340,6 +408,7 @@ export function TeamBidConsole() {
         {participatingTeams.map(team => {
           const bid = bids.find(b => b.team_id === team.id)
           const filled = filledSlotsByTeam[team.id]?.[position] ?? 0
+          const clubCapped = (clubCountsByTeam[team.id]?.[player.fpl_team] ?? 0) >= SQUAD_RULES.max_per_club
           return (
             <TeamBidRow
               key={team.id}
@@ -349,6 +418,7 @@ export function TeamBidConsole() {
               filledSlots={filled}
               position={position}
               isCurrentTurn={current_turn_team_id === team.id}
+              isClubCapped={clubCapped}
             />
           )
         })}

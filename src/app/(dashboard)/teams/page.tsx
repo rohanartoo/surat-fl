@@ -52,6 +52,12 @@ export default async function TeamsPage() {
             },
             { GK: [], DEF: [], MID: [], FWD: [] }
           )
+          // Per-PL-club counts, so teams can spot how close they are to the
+          // 3-players-per-club cap without counting by hand.
+          const clubCounts = entries.reduce<Record<string, number>>((acc, e) => {
+            if (e.player?.fpl_team) acc[e.player.fpl_team] = (acc[e.player.fpl_team] ?? 0) + 1
+            return acc
+          }, {})
 
           return (
             <Card key={team.id} className="border-border/60">
@@ -85,11 +91,25 @@ export default async function TeamsPage() {
                             {players.length}/{maxSlots}
                           </span>
                         </div>
-                        {players.map((e) => (
-                          <p key={e.id} className="text-xs text-foreground leading-snug truncate" title={e.player?.web_name}>
-                            {e.player?.web_name}
-                          </p>
-                        ))}
+                        {players.map((e) => {
+                          const clubCount = e.player?.fpl_team ? clubCounts[e.player.fpl_team] ?? 0 : 0
+                          const clubCapped = clubCount >= SQUAD_RULES.max_per_club
+                          return (
+                            <div
+                              key={e.id}
+                              className="flex items-baseline justify-between gap-1 leading-snug"
+                              title={`${e.player?.web_name} — ${e.player?.fpl_team_short} (${clubCount}/${SQUAD_RULES.max_per_club}) — ${formatMoney(e.base_price)}`}
+                            >
+                              <p className="text-xs text-foreground truncate">{e.player?.web_name}</p>
+                              <p className={cn(
+                                "text-[10px] font-mono shrink-0 whitespace-nowrap",
+                                clubCapped ? "text-amber-500 font-medium" : "text-muted-foreground"
+                              )}>
+                                {e.player?.fpl_team_short} · {formatMoney(e.base_price)}
+                              </p>
+                            </div>
+                          )
+                        })}
                         {Array.from({ length: maxSlots - players.length }).map((_, i) => (
                           <p key={i} className="text-xs text-muted-foreground/40 italic">—</p>
                         ))}

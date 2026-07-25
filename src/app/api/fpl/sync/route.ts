@@ -37,7 +37,23 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ synced: players.length, ok: true })
+    // Remove any player no longer in FPL's feed (reissued element ids,
+    // relegated/departed clubs) — see 20260726000001_prune_stale_players.sql.
+    // Never touches a player with any roster/auction/drop/scoring history.
+    const currentIds = players.map((p) => p.id)
+    const { data: pruneResult, error: pruneErr } = await supabase
+      .rpc("rpc_prune_stale_players", { p_current_ids: currentIds })
+      .single()
+    if (pruneErr) {
+      console.error("[fpl/sync] prune error:", JSON.stringify(pruneErr))
+      throw pruneErr
+    }
+
+    return NextResponse.json({
+      synced: players.length,
+      pruned: (pruneResult as { pruned: number }).pruned,
+      ok: true,
+    })
   } catch (err) {
     console.error("[fpl/sync] error:", err)
     const message = err instanceof Error

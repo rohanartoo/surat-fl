@@ -129,6 +129,9 @@ function PlayerRow({
         </div>
       </div>
       <div className="flex items-center gap-3 shrink-0 ml-2">
+        <span className="text-[10px] font-mono text-muted-foreground/60" title="Selected by (FPL)">
+          {player.selected_by_percent}%
+        </span>
         <span className="text-xs font-mono text-muted-foreground">
           {formatMoney(player.base_price)}
         </span>
