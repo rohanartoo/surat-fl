@@ -15,6 +15,10 @@ interface Props {
   onSetCaptain: (entryId: string) => void
   onSetVC: (entryId: string) => void
   onMarkDrop: (entryId: string) => void
+  isSelected?: boolean
+  isEligible?: boolean
+  dimmed?: boolean
+  onSelect?: () => void
 }
 
 export function PlayerCard({
@@ -24,6 +28,10 @@ export function PlayerCard({
   onSetCaptain,
   onSetVC,
   onMarkDrop,
+  isSelected,
+  isEligible,
+  dimmed,
+  onSelect,
 }: Props) {
   const {
     attributes,
@@ -43,10 +51,15 @@ export function PlayerCard({
     <div
       ref={setNodeRef}
       style={style}
+      onClick={canEdit ? onSelect : undefined}
       className={cn(
-        "flex items-center justify-between py-2.5 px-2 rounded-md transition-all duration-200 ease-out group",
+        "flex items-center justify-between py-2.5 px-2 rounded-md border border-transparent transition-all duration-200 ease-out group",
         "hover:bg-accent/50",
+        canEdit && "cursor-pointer",
         isDragging && "opacity-40",
+        isSelected && "border-primary/60 bg-primary/10",
+        isEligible && "border-emerald-500/60 bg-emerald-500/10",
+        dimmed && "opacity-40",
       )}
     >
       <div className="flex items-center gap-3">
@@ -55,6 +68,7 @@ export function PlayerCard({
           <div
             {...attributes}
             {...listeners}
+            onClick={(e) => e.stopPropagation()}
             className="text-muted-foreground/40 hover:text-muted-foreground cursor-grab active:cursor-grabbing touch-none select-none"
           >
             ⠿
@@ -93,7 +107,7 @@ export function PlayerCard({
                 size="sm"
                 variant="ghost"
                 className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-amber-500"
-                onClick={() => onSetCaptain(entry.id)}
+                onClick={(e) => { e.stopPropagation(); onSetCaptain(entry.id) }}
               >
                 C
               </Button>
@@ -103,7 +117,7 @@ export function PlayerCard({
                 size="sm"
                 variant="ghost"
                 className="h-6 px-1.5 text-[10px] text-muted-foreground"
-                onClick={() => onSetVC(entry.id)}
+                onClick={(e) => { e.stopPropagation(); onSetVC(entry.id) }}
               >
                 VC
               </Button>
@@ -112,7 +126,7 @@ export function PlayerCard({
               size="sm"
               variant="ghost"
               className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
-              onClick={() => onMarkDrop(entry.id)}
+              onClick={(e) => { e.stopPropagation(); onMarkDrop(entry.id) }}
             >
               Drop
             </Button>

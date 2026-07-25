@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useMemo } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -24,7 +24,7 @@ import { PlayerCard, PlayerCardOverlay } from "./PlayerCard"
 import { DroppedSection } from "./DroppedSection"
 import { TeamBudgetBar } from "./TeamBudgetBar"
 import { SQUAD_RULES } from "@/types"
-import type { RosterEntry, Player, DropQuotaSummary } from "@/types"
+import type { RosterEntry, Player, Position, DropQuotaSummary } from "@/types"
 
 interface Props {
   initialRoster: (RosterEntry & { player: Player })[]
@@ -35,6 +35,9 @@ interface Props {
 }
 
 type Entry = RosterEntry & { player: Player }
+
+const POSITION_ORDER: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 }
+const byPosition = (a: Entry, b: Entry) => POSITION_ORDER[a.player.position] - POSITION_ORDER[b.player.position]
 
 async function post(action: string, body: object) {
   const res = await fetch(`/api/team/${action}`, {
@@ -50,6 +53,7 @@ async function post(action: string, body: object) {
 export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary, dropsLocked }: Props) {
   const [roster, setRoster] = useState<Entry[]>(initialRoster)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const sensors = useSensors(
@@ -57,9 +61,12 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
-  const startingXI = roster.filter(e => e.slot_type === "starting")
+  // Displayed top-to-bottom by position (GK, DEF, MID, FWD). Bench priority
+  // (bench_order, used by auto-subs) is unaffected — it's a secondary sort
+  // key here, still shown via the numbered badge on each card.
+  const startingXI = roster.filter(e => e.slot_type === "starting").sort(byPosition)
   const bench = roster.filter(e => e.slot_type === "bench")
-    .sort((a, b) => (a.bench_order ?? 99) - (b.bench_order ?? 99))
+    .sort((a, b) => byPosition(a, b) || (a.bench_order ?? 99) - (b.bench_order ?? 99))
   const dropped = roster.filter(e => e.slot_type === "dropped")
 
   const activeEntry = activeId ? roster.find(e => e.id === activeId) ?? null : null
@@ -104,8 +111,69 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
     }
   }, [initialRoster])
 
+  // Tap-to-substitute: selecting a player highlights every player on the
+  // opposite side of the sheet (starting <-> bench) that it could legally
+  // swap with. Formation minimums/maximums (SQUAD_RULES.min_starting /
+  // max_starting) are only enforced once the squad is complete (15/15) —
+  // same threshold handleSwap's server-side formation check uses — since a
+  // squad still being built has no fixed starting XI to validate against.
+  const selectedEntry = selectedId ? roster.find(e => e.id === selectedId) ?? null : null
+  const squadComplete = activeCount === SQUAD_RULES.total
+
+  const eligiblePartnerIds = useMemo(() => {
+    if (!selectedEntry) return new Set<string>()
+    const oppositeSlot = selectedEntry.slot_type === "starting" ? "bench" : "starting"
+    const candidates = roster.filter(e => e.slot_type === oppositeSlot)
+    if (!squadComplete) return new Set(candidates.map(c => c.id))
+
+    const counts: Record<Position, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 }
+    for (const e of startingXI) counts[e.player.position]++
+
+    const eligible = new Set<string>()
+    for (const c of candidates) {
+      // Whichever of the two is currently starting is the one that would
+      // leave the XI; the other is the one that would enter it.
+      const outPos = selectedEntry.slot_type === "starting" ? selectedEntry.player.position : c.player.position
+      const inPos = selectedEntry.slot_type === "starting" ? c.player.position : selectedEntry.player.position
+      if (outPos === inPos) { eligible.add(c.id); continue }
+      const newOutCount = counts[outPos] - 1
+      const newInCount = counts[inPos] + 1
+      if (newOutCount >= SQUAD_RULES.min_starting[outPos] && newInCount <= SQUAD_RULES.max_starting[inPos]) {
+        eligible.add(c.id)
+      }
+    }
+    return eligible
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEntry, roster, squadComplete])
+
+  // An empty starting/bench slot is only ever present when the squad isn't
+  // complete, at which point formation isn't enforced — so any player from
+  // the opposite section can always move into it.
+  const emptyStartEligible = !!selectedEntry && selectedEntry.slot_type === "bench"
+  const emptyBenchEligible = !!selectedEntry && selectedEntry.slot_type === "starting"
+
+  function handleSelect(id: string) {
+    if (!canEdit) return
+    const entry = roster.find(e => e.id === id)
+    if (!entry) return
+    if (selectedId === id) { setSelectedId(null); return }
+    if (selectedId && eligiblePartnerIds.has(id)) {
+      applySwap(selectedId, entry.slot_type as "starting" | "bench", id, entry.bench_order ?? undefined)
+      setSelectedId(null)
+      return
+    }
+    setSelectedId(id)
+  }
+
+  function handleSelectEmpty(targetSlot: "starting" | "bench", order?: number) {
+    if (!selectedId) return
+    applySwap(selectedId, targetSlot, undefined, order)
+    setSelectedId(null)
+  }
+
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
+    setSelectedId(null)
     setError(null)
   }
 
@@ -230,11 +298,22 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
                   onSetCaptain={handleSetCaptain}
                   onSetVC={handleSetVC}
                   onMarkDrop={handleMarkDrop}
+                  isSelected={entry.id === selectedId}
+                  isEligible={eligiblePartnerIds.has(entry.id)}
+                  dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
+                  onSelect={() => handleSelect(entry.id)}
                 />
               ))}
             </SortableContext>
             {Array.from({ length: Math.max(0, SQUAD_RULES.starting - startingXI.length) }).map((_, i) => (
-              <EmptySlot key={`empty-start-${i}`} id={`empty-start-${i}`} label="Empty starting slot" />
+              <EmptySlot
+                key={`empty-start-${i}`}
+                id={`empty-start-${i}`}
+                label="Empty starting slot"
+                isEligible={emptyStartEligible}
+                dimmed={!!selectedId && !emptyStartEligible}
+                onSelect={() => handleSelectEmpty("starting")}
+              />
             ))}
           </CardContent>
         </Card>
@@ -256,11 +335,23 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
                   onSetCaptain={handleSetCaptain}
                   onSetVC={handleSetVC}
                   onMarkDrop={handleMarkDrop}
+                  isSelected={entry.id === selectedId}
+                  isEligible={eligiblePartnerIds.has(entry.id)}
+                  dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
+                  onSelect={() => handleSelect(entry.id)}
                 />
               ))}
             </SortableContext>
             {Array.from({ length: emptyBenchSlots }).map((_, i) => (
-              <EmptySlot key={`empty-bench-${i}`} id={`empty-bench-${bench.length + i + 1}`} label="Empty bench slot" index={bench.length + i + 1} />
+              <EmptySlot
+                key={`empty-bench-${i}`}
+                id={`empty-bench-${bench.length + i + 1}`}
+                label="Empty bench slot"
+                index={bench.length + i + 1}
+                isEligible={emptyBenchEligible}
+                dimmed={!!selectedId && !emptyBenchEligible}
+                onSelect={() => handleSelectEmpty("bench", bench.length + i + 1)}
+              />
             ))}
           </CardContent>
         </Card>
@@ -287,13 +378,18 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
   )
 }
 
-function EmptySlot({ id, label, index }: { id: string; label: string; index?: number }) {
+function EmptySlot({
+  id, label, index, isEligible, dimmed, onSelect,
+}: { id: string; label: string; index?: number; isEligible?: boolean; dimmed?: boolean; onSelect?: () => void }) {
   const { setNodeRef, isOver } = useDroppable({ id })
   return (
     <div
       ref={setNodeRef}
+      onClick={isEligible ? onSelect : undefined}
       className={`flex items-center gap-3 py-2.5 px-2 rounded-md border transition-colors ${
-        isOver ? "border-primary/50 bg-primary/10 opacity-70" : "border-transparent opacity-30"
+        isOver || isEligible
+          ? "border-emerald-500/60 bg-emerald-500/10 opacity-70 cursor-pointer"
+          : dimmed ? "border-transparent opacity-15" : "border-transparent opacity-30"
       }`}
     >
       {index !== undefined && (
