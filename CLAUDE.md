@@ -36,7 +36,7 @@ Tech stack: Next.js 16 (App Router), Supabase (Postgres + Auth + Realtime), Tail
 ### Squad & budget
 - 7 teams, fixed. £100m budget per team per season.
 - 15 players per team: 2 GK, 5 DEF, 5 MID, 3 FWD. Starting XI = 11, Bench = 4 (numbered priority 1–4).
-- Formation minimums: 1 GK, 3 DEF, 3 MID, 1 FWD. No strict formations enforced beyond minimums.
+- Formation minimums: 1 GK, 3 DEF, 2 MID, 1 FWD. No strict formations enforced beyond minimums.
 
 ### Bidding
 - Opening bid ≥ player base price. Increments: +£1m when current bid < £20m, +£2m when ≥ £20m.

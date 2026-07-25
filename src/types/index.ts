@@ -16,7 +16,7 @@ export const SQUAD_RULES = {
   bench: 4,
   slots: { GK: 2, DEF: 5, MID: 5, FWD: 3 } as Record<Position, number>,
   /** Minimum players per position in the starting XI */
-  min_starting: { GK: 1, DEF: 3, MID: 3, FWD: 1 } as Record<Position, number>,
+  min_starting: { GK: 1, DEF: 3, MID: 2, FWD: 1 } as Record<Position, number>,
   /** Maximum players per position in the starting XI (GK capped at 1; others capped by squad size) */
   max_starting: { GK: 1, DEF: 5, MID: 5, FWD: 3 } as Record<Position, number>,
   /** Minimum base price for any player */
