@@ -10,8 +10,9 @@ function createClient() {
 }
 
 /**
- * GET /api/admin/simulate-gw/check?gw=38
- * Admin only. Returns { exists: boolean } — whether gameweek_points already has rows for this GW.
+ * GET /api/admin/simulate-gw/check?gws=38,39,40
+ * Admin only. Returns { exists: boolean, existing: number[] } — which of the
+ * given gameweeks already have rows in gameweek_points.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -20,14 +21,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Admin only." }, { status: 403 })
   }
 
-  const gw = parseInt(request.nextUrl.searchParams.get("gw") ?? "", 10)
-  if (isNaN(gw)) return NextResponse.json({ error: "gw param required." }, { status: 400 })
+  const raw = request.nextUrl.searchParams.get("gws") ?? request.nextUrl.searchParams.get("gw") ?? ""
+  const gws = raw.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n))
+  if (gws.length === 0) return NextResponse.json({ error: "gws param required." }, { status: 400 })
 
   const supabase = createClient()
-  const { count } = await supabase
+  const { data } = await supabase
     .from("gameweek_points")
-    .select("id", { count: "exact", head: true })
-    .eq("gameweek", gw)
+    .select("gameweek")
+    .in("gameweek", gws)
 
-  return NextResponse.json({ exists: (count ?? 0) > 0 })
+  const existing = [...new Set((data ?? []).map(r => r.gameweek))].sort((a, b) => a - b)
+  return NextResponse.json({ exists: existing.length > 0, existing })
 }

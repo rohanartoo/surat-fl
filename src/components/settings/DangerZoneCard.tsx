@@ -15,8 +15,32 @@ export function DangerZoneCard() {
   const [gwValue, setGwValue] = useState("38")
   const [gwLoading, setGwLoading] = useState(false)
   const [gwConfirm, setGwConfirm] = useState(false)
+  const [gwExisting, setGwExisting] = useState<number[]>([])
   const [gwError, setGwError] = useState<string | null>(null)
   const [gwSuccess, setGwSuccess] = useState<string | null>(null)
+
+  // Accepts "38", "38-40", or "38,39,42" (mix of comma-separated values and ranges)
+  function parseGwInput(value: string): number[] | null {
+    const parts = value.split(",").map(p => p.trim()).filter(Boolean)
+    if (parts.length === 0) return null
+    const gws = new Set<number>()
+    for (const part of parts) {
+      const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/)
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1], 10)
+        const end = parseInt(rangeMatch[2], 10)
+        if (isNaN(start) || isNaN(end) || start > end) return null
+        for (let gw = start; gw <= end; gw++) gws.add(gw)
+      } else {
+        const gw = parseInt(part, 10)
+        if (isNaN(gw) || String(gw) !== part) return null
+        gws.add(gw)
+      }
+    }
+    const list = [...gws]
+    if (list.some(gw => gw < 1 || gw > 100)) return null
+    return list.sort((a, b) => a - b)
+  }
 
   async function handleWipe() {
     setLoading(true)
@@ -37,9 +61,9 @@ export function DangerZoneCard() {
   }
 
   async function handleSimulateGw(skipCheck = false) {
-    const gw = parseInt(gwValue, 10)
-    if (isNaN(gw) || gw < 1 || gw > 100) {
-      setGwError("Enter a GW number between 1 and 100.")
+    const gws = parseGwInput(gwValue)
+    if (!gws) {
+      setGwError("Enter a GW number, range (38-40), or list (38,39,42) between 1 and 100.")
       return
     }
 
@@ -48,12 +72,13 @@ export function DangerZoneCard() {
     setGwSuccess(null)
 
     try {
-      // Check if data already exists for this GW
+      // Check if data already exists for any of these GWs
       if (!skipCheck) {
-        const checkRes = await fetch(`/api/admin/simulate-gw/check?gw=${gw}`)
+        const checkRes = await fetch(`/api/admin/simulate-gw/check?gws=${gws.join(",")}`)
         if (checkRes.ok) {
-          const { exists } = await checkRes.json()
+          const { exists, existing } = await checkRes.json()
           if (exists) {
+            setGwExisting(existing)
             setGwConfirm(true)
             setGwLoading(false)
             return
@@ -65,11 +90,11 @@ export function DangerZoneCard() {
       const res = await fetch("/api/admin/simulate-gw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gameweek: gw }),
+        body: JSON.stringify({ gameweeks: gws }),
       })
       const data = await res.json()
       if (!res.ok) { setGwError(data.error ?? "Simulation failed."); return }
-      setGwSuccess(`GW ${data.gameweek} simulated — ${data.rows} player rows written.`)
+      setGwSuccess(`GW ${data.gameweeks.join(", ")} simulated — ${data.rows} player rows written.`)
     } finally {
       setGwLoading(false)
     }
@@ -121,23 +146,22 @@ export function DangerZoneCard() {
         <div className="space-y-3">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Simulate Gameweek Scores</p>
           <p className="text-xs text-muted-foreground">
-            Generates random points for all rostered players for a chosen GW. Use GW 38+ to avoid conflicts with real data.
+            Generates random points for all rostered players for one or more GWs. Use GW 38+ to avoid conflicts with real data.
+            Enter a single GW (38), a range (38-40), or a list (38,39,42).
           </p>
           <div className="flex gap-2">
             <Input
-              type="number"
-              min={1}
-              max={100}
+              type="text"
               value={gwValue}
               onChange={e => { setGwValue(e.target.value); setGwConfirm(false); setGwSuccess(null); setGwError(null) }}
-              className="h-8 w-24 text-sm"
-              placeholder="GW"
+              className="h-8 w-32 text-sm"
+              placeholder="e.g. 38-40"
               disabled={gwLoading}
             />
             {gwConfirm ? (
               <div className="flex gap-2 flex-1">
                 <Button size="sm" variant="destructive" className="flex-1 text-xs" disabled={gwLoading} onClick={() => handleSimulateGw(true)}>
-                  Overwrite GW {gwValue}
+                  Overwrite
                 </Button>
                 <Button size="sm" variant="outline" className="flex-1 text-xs" disabled={gwLoading} onClick={() => setGwConfirm(false)}>
                   Cancel
@@ -149,7 +173,7 @@ export function DangerZoneCard() {
               </Button>
             )}
           </div>
-          {gwConfirm && <p className="text-xs text-amber-500">GW {gwValue} already has data. Overwrite?</p>}
+          {gwConfirm && <p className="text-xs text-amber-500">GW {gwExisting.join(", ")} already {gwExisting.length > 1 ? "have" : "has"} data. Overwrite?</p>}
           {gwSuccess && <p className="text-xs text-emerald-500">{gwSuccess}</p>}
           {gwError && <p className="text-xs text-destructive">{gwError}</p>}
         </div>

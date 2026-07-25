@@ -20,9 +20,9 @@ function simulatePoints(): number {
 
 /**
  * POST /api/admin/simulate-gw
- * Body: { gameweek: number }
- * Admin only. Generates random points for all rostered players for the given GW.
- * Upserts into gameweek_points — safe to re-run for the same GW.
+ * Body: { gameweek: number } | { gameweeks: number[] }
+ * Admin only. Generates random points for all rostered players for the given
+ * gameweek(s). Deletes+reinserts non-penalty rows per GW — safe to re-run.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -32,11 +32,17 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => ({}))
-  const { gameweek } = body
+  const gameweeks: unknown[] = Array.isArray(body.gameweeks)
+    ? body.gameweeks
+    : typeof body.gameweek === "number" ? [body.gameweek] : []
 
-  if (typeof gameweek !== "number" || gameweek < 1 || gameweek > 100) {
-    return NextResponse.json({ error: "gameweek must be a number between 1 and 100." }, { status: 400 })
+  if (
+    gameweeks.length === 0 ||
+    !gameweeks.every(gw => typeof gw === "number" && gw >= 1 && gw <= 100)
+  ) {
+    return NextResponse.json({ error: "gameweek(s) must be numbers between 1 and 100." }, { status: 400 })
   }
+  const gws = gameweeks as number[]
 
   const supabase = createClient()
 
@@ -50,19 +56,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No rostered players found. Run a draft first." }, { status: 400 })
   }
 
-  const rows = rosterRows.map(r => ({
-    team_id: r.team_id,
-    player_id: r.player_id,
-    gameweek,
-    points: simulatePoints(),
-    was_subbed_in: false,
-  }))
+  let totalRows = 0
+  for (const gameweek of gws) {
+    // gameweek_points only has a partial unique index (player_id is not null),
+    // which Postgres can't use as an ON CONFLICT inference target — so we
+    // delete-then-insert per GW instead of upserting.
+    const { error: deleteErr } = await supabase
+      .from("gameweek_points")
+      .delete()
+      .eq("gameweek", gameweek)
+      .not("player_id", "is", null)
+    if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 })
 
-  const { error: upsertErr } = await supabase
-    .from("gameweek_points")
-    .upsert(rows, { onConflict: "team_id,player_id,gameweek" })
+    const rows = rosterRows.map(r => ({
+      team_id: r.team_id,
+      player_id: r.player_id,
+      gameweek,
+      points: simulatePoints(),
+      was_subbed_in: false,
+    }))
 
-  if (upsertErr) return NextResponse.json({ error: upsertErr.message }, { status: 500 })
+    const { error: insertErr } = await supabase.from("gameweek_points").insert(rows)
+    if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
+    totalRows += rows.length
+  }
 
-  return NextResponse.json({ ok: true, gameweek, rows: rows.length })
+  return NextResponse.json({ ok: true, gameweeks: gws, rows: totalRows })
 }
