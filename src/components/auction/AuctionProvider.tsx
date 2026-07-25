@@ -163,7 +163,7 @@ export function AuctionProvider({
             .from("auction_log")
             .select("*")
             .eq("auction_id", auctionData.id)
-            .order("created_at", { ascending: false })
+            .order("seq", { ascending: false })
             .limit(50),
         ])
 

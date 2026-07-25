@@ -53,7 +53,7 @@ async function getPageData() {
         .from("auction_log")
         .select("*")
         .eq("auction_id", auction.id)
-        .order("created_at", { ascending: false })
+        .order("seq", { ascending: false })
         .limit(50),
     ])
 

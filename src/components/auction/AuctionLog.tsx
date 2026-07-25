@@ -3,9 +3,9 @@
 import { useAuction } from "./AuctionProvider"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatMoney } from "@/lib/utils"
-import type { AuctionLogEntry } from "@/types"
+import type { AuctionLogEntry, LeagueTeam } from "@/types"
 
-function logLine(entry: AuctionLogEntry): string {
+function logLine(entry: AuctionLogEntry, teams: LeagueTeam[]): string {
   const p = entry.payload as Record<string, unknown>
 
   switch (entry.action_type) {
@@ -24,14 +24,29 @@ function logLine(entry: AuctionLogEntry): string {
     case "assignment_undone":
       return `↩️ ${p.player_name} assignment to ${p.team_name} undone`
     case "lot_no_interest":
-      return `⏭ Player passed — no interest`
+      return `⏭ ${p.player_name ?? "Player"} passed — no interest`
+    case "lot_returned_to_pool":
+      return `🔁 ${p.player_name ?? "Player"} returned to pool — no bids placed`
+    case "bidding_started": {
+      const count = (p.interested_count as number) ?? 0
+      const firstBidder = teams.find(t => t.id === p.first_bidder_id)
+      return firstBidder
+        ? `🔔 Bidding started — ${count} team${count === 1 ? "" : "s"} interested, ${firstBidder.short_name} up first`
+        : `🔔 Bidding started — ${count} team${count === 1 ? "" : "s"} interested`
+    }
+    case "position_advanced":
+      return `➡️ Position advanced: ${p.from} → ${p.to}`
+    case "bid_undone":
+      return `↩️ ${p.team_name} undid their bid of ${formatMoney(p.undone_amount as number)}`
     default:
-      return entry.action_type
+      // Fallback for any action_type not explicitly handled above — never
+      // show the raw snake_case identifier.
+      return entry.action_type.replace(/_/g, " ")
   }
 }
 
 export function AuctionLog() {
-  const { log } = useAuction()
+  const { log, teams } = useAuction()
 
   return (
     <Card className="border-border/60">
@@ -45,7 +60,7 @@ export function AuctionLog() {
           ) : (
             log.map((entry) => (
               <div key={entry.id} className="px-4 py-2">
-                <p className="text-xs text-foreground leading-snug">{logLine(entry)}</p>
+                <p className="text-xs text-foreground leading-snug">{logLine(entry, teams)}</p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">
                   {new Date(entry.created_at).toLocaleTimeString()}
                 </p>
