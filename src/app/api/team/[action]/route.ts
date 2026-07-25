@@ -93,28 +93,22 @@ async function handleSwap(request: NextRequest) {
     if (formationError) return err(formationError)
   }
 
-  // Apply writes
+  // Apply writes atomically — rpc_swap_roster_entry locks both rows and does
+  // the slot_type/bench_order updates in one transaction, so a partial
+  // failure can never leave one side moved and the other stuck (see
+  // 20260725000001_atomic_roster_swap.sql for the bug this replaced).
   if (displaced_entry_id) {
     const displaced = rows.find(r => r.id === displaced_entry_id)
     if (!displaced) return err("Displaced entry not found.")
-
-    // Swap slot types and bench_order between the two entries
-    const entryNewBenchOrder = target_slot === "bench" ? (bench_order ?? displaced.bench_order ?? null) : null
-    const displacedNewSlot = entry.slot_type as "starting" | "bench"
-    const displacedNewBenchOrder = displacedNewSlot === "bench" ? (entry.bench_order ?? null) : null
-
-    await supabase.from("roster_entries")
-      .update({ slot_type: target_slot, bench_order: entryNewBenchOrder })
-      .eq("id", entry_id)
-    await supabase.from("roster_entries")
-      .update({ slot_type: displacedNewSlot, bench_order: displacedNewBenchOrder })
-      .eq("id", displaced_entry_id)
-  } else {
-    await supabase.from("roster_entries").update({
-      slot_type: target_slot,
-      bench_order: target_slot === "bench" ? (bench_order ?? null) : null,
-    }).eq("id", entry_id)
   }
+
+  const { error: swapErr } = await supabase.rpc("rpc_swap_roster_entry", {
+    p_entry_id: entry_id,
+    p_target_slot: target_slot,
+    p_bench_order: bench_order ?? null,
+    p_displaced_entry_id: displaced_entry_id ?? null,
+  })
+  if (swapErr) return err(swapErr.message)
 
   return NextResponse.json({ success: true })
 }

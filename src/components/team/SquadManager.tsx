@@ -9,6 +9,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core"
@@ -117,8 +118,21 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
     const overId = over.id as string
 
     const dragged = roster.find(e => e.id === draggedId)
+    if (!dragged) return
+
+    // Dropped onto an empty slot placeholder — no displaced entry, just a move.
+    if (overId.startsWith("empty-bench-")) {
+      const order = parseInt(overId.replace("empty-bench-", ""), 10)
+      applySwap(draggedId, "bench", undefined, order)
+      return
+    }
+    if (overId.startsWith("empty-start-")) {
+      applySwap(draggedId, "starting")
+      return
+    }
+
     const target = roster.find(e => e.id === overId)
-    if (!dragged || !target) return
+    if (!target) return
 
     // Swap the two entries
     if (dragged.slot_type !== target.slot_type) {
@@ -220,7 +234,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
               ))}
             </SortableContext>
             {Array.from({ length: Math.max(0, SQUAD_RULES.starting - startingXI.length) }).map((_, i) => (
-              <EmptySlot key={`empty-start-${i}`} label="Empty starting slot" />
+              <EmptySlot key={`empty-start-${i}`} id={`empty-start-${i}`} label="Empty starting slot" />
             ))}
           </CardContent>
         </Card>
@@ -246,7 +260,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
               ))}
             </SortableContext>
             {Array.from({ length: emptyBenchSlots }).map((_, i) => (
-              <EmptySlot key={`empty-bench-${i}`} label="Empty bench slot" index={bench.length + i + 1} />
+              <EmptySlot key={`empty-bench-${i}`} id={`empty-bench-${bench.length + i + 1}`} label="Empty bench slot" index={bench.length + i + 1} />
             ))}
           </CardContent>
         </Card>
@@ -273,9 +287,15 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
   )
 }
 
-function EmptySlot({ label, index }: { label: string; index?: number }) {
+function EmptySlot({ id, label, index }: { id: string; label: string; index?: number }) {
+  const { setNodeRef, isOver } = useDroppable({ id })
   return (
-    <div className="flex items-center gap-3 py-2.5 px-2 opacity-30">
+    <div
+      ref={setNodeRef}
+      className={`flex items-center gap-3 py-2.5 px-2 rounded-md border transition-colors ${
+        isOver ? "border-primary/50 bg-primary/10 opacity-70" : "border-transparent opacity-30"
+      }`}
+    >
       {index !== undefined && (
         <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted/10 text-[10px] font-bold text-muted-foreground border border-border/30">
           {index}
