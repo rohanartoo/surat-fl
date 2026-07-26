@@ -214,9 +214,21 @@ export function chooseSlotType(
   currentRoster: { slot_type: string; position: Position }[],
 ): "starting" | "bench" {
   const starters = currentRoster.filter(e => e.slot_type === "starting")
-  if (starters.length >= SQUAD_RULES.starting) return "bench"
   const startersAtPos = starters.filter(e => e.position === position).length
   if (startersAtPos >= SQUAD_RULES.max_starting[position]) return "bench"
+
+  // Reserve starting slots for positions later in the draft order
+  // (POSITION_ORDER: GK, DEF, MID, FWD), based on how much of their minimum
+  // is still unfilled. Without this, a team that maxes out DEF+MID before
+  // ever buying a FWD locks in all 11 starting slots with zero FWD —
+  // guaranteed to fail validateFormation's FWD minimum.
+  const laterPositions = POSITION_ORDER.slice(POSITION_ORDER.indexOf(position) + 1)
+  const reserve = laterPositions.reduce((sum, pos) => {
+    const filled = starters.filter(e => e.position === pos).length
+    return sum + Math.max(0, SQUAD_RULES.min_starting[pos] - filled)
+  }, 0)
+
+  if (starters.length >= SQUAD_RULES.starting - reserve) return "bench"
   return "starting"
 }
 

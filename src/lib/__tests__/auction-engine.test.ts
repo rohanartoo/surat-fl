@@ -210,6 +210,27 @@ describe("chooseSlotType", () => {
     ]
     expect(chooseSlotType("FWD", roster)).toBe("starting")
   })
+
+  it("reserves a starting slot for FWD instead of filling all 11 with GK/DEF/MID", () => {
+    // 1 GK + 5 DEF + 4 MID = 10 starters, all positions at/under their own
+    // max — greedily this MID would start (making it 11 with 0 FWD), but a
+    // FWD hasn't been drafted yet and needs at least 1 starting slot.
+    const roster = [
+      makeEntry("starting", "GK"),
+      ...Array(5).fill(makeEntry("starting", "DEF")),
+      ...Array(4).fill(makeEntry("starting", "MID")),
+    ]
+    expect(chooseSlotType("MID", roster)).toBe("bench")
+  })
+
+  it("still starts a FWD once one has finally been drafted, even at 10 starters", () => {
+    const roster = [
+      makeEntry("starting", "GK"),
+      ...Array(5).fill(makeEntry("starting", "DEF")),
+      ...Array(4).fill(makeEntry("starting", "MID")),
+    ]
+    expect(chooseSlotType("FWD", roster)).toBe("starting")
+  })
 })
 
 // ─── validateFormation ────────────────────────────────────────────────────────
