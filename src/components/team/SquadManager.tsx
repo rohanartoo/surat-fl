@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -56,6 +56,15 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Always-current snapshot of roster, used so a failed swap can revert to
+  // the last state the server actually confirmed — not the stale page-load
+  // prop, which would silently wipe out any earlier successful changes made
+  // in the same session.
+  const rosterRef = useRef(roster)
+  useEffect(() => { rosterRef.current = roster }, [roster])
+  const isSavingRef = useRef(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -82,13 +91,23 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
 
   // Optimistically update local state, then sync with server
   const applySwap = useCallback(async (entryId: string, targetSlot: "starting" | "bench", displacedId?: string, newBenchOrder?: number) => {
+    // Refuse to start a second swap while one is still in flight — a click
+    // and a drag-end firing off the same gesture (or a fast double-tap)
+    // could otherwise both apply, which is how a straight swap (which
+    // always balances itself) turned into a bare move that left the
+    // Starting XI at 12.
+    if (isSavingRef.current) return
     setError(null)
+
+    const snapshotBeforeThisSwap = rosterRef.current
+    let invalid = false
+
     // Optimistic update
     setRoster(prev => {
       const next = prev.map(e => ({ ...e }))
       const entry = next.find(e => e.id === entryId)
       const displaced = displacedId ? next.find(e => e.id === displacedId) : undefined
-      if (!entry) return prev
+      if (!entry) { invalid = true; return prev }
 
       if (displaced) {
         const oldSlot = entry.slot_type as "starting" | "bench"
@@ -101,16 +120,42 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
         entry.slot_type = targetSlot
         entry.bench_order = targetSlot === "bench" ? (newBenchOrder ?? null) : null
       }
+
+      // Hard guard: a real swap (displacedId set) always balances itself; a
+      // move into an empty slot only makes sense when that slot was
+      // actually empty. Either way the totals must never cross their caps —
+      // if they would, refuse locally instead of showing a phantom 12th
+      // starting player and sending a request the server can only reject.
+      const startingCount = next.filter(e => e.slot_type === "starting").length
+      const benchCount = next.filter(e => e.slot_type === "bench").length
+      if (startingCount > SQUAD_RULES.starting || benchCount > SQUAD_RULES.bench) {
+        invalid = true
+        return prev
+      }
+
       return next
     })
 
+    if (invalid) {
+      setError("That move isn't allowed — your squad may be out of sync, try refreshing.")
+      return
+    }
+
+    isSavingRef.current = true
+    setIsSaving(true)
     try {
       await post("swap", { entry_id: entryId, target_slot: targetSlot, bench_order: newBenchOrder, displaced_entry_id: displacedId })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Swap failed.")
-      setRoster(initialRoster) // revert on error
+      // Revert only this attempt — back to what the server last confirmed,
+      // not the page-load snapshot, so a later failure can't undo earlier
+      // successful swaps from the same session.
+      setRoster(snapshotBeforeThisSwap)
+    } finally {
+      isSavingRef.current = false
+      setIsSaving(false)
     }
-  }, [initialRoster])
+  }, [])
 
   // Tap-to-substitute: selecting a player highlights every player on the
   // opposite side of the sheet (starting <-> bench) that it could legally
@@ -224,28 +269,31 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
 
   async function handleSetCaptain(entryId: string) {
     setError(null)
+    const snapshot = rosterRef.current
     setRoster(prev => prev.map(e => ({ ...e, is_captain: e.id === entryId })))
     try {
       await post("set-captain", { entry_id: entryId, role: "captain" })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to set captain.")
-      setRoster(initialRoster)
+      setRoster(snapshot)
     }
   }
 
   async function handleSetVC(entryId: string) {
     setError(null)
+    const snapshot = rosterRef.current
     setRoster(prev => prev.map(e => ({ ...e, is_vice_captain: e.id === entryId })))
     try {
       await post("set-captain", { entry_id: entryId, role: "vice_captain" })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to set vice-captain.")
-      setRoster(initialRoster)
+      setRoster(snapshot)
     }
   }
 
   async function handleMarkDrop(entryId: string) {
     setError(null)
+    const snapshot = rosterRef.current
     setRoster(prev => prev.map(e => e.id === entryId
       ? { ...e, slot_type: "dropped" as const, bench_order: null, is_captain: false, is_vice_captain: false }
       : e
@@ -254,12 +302,13 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
       await post("mark-drop", { entry_id: entryId })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to stage drop.")
-      setRoster(initialRoster)
+      setRoster(snapshot)
     }
   }
 
   async function handleReturnFromDrop(entryId: string) {
     setError(null)
+    const snapshot = rosterRef.current
     // Find next available bench slot optimistically
     const usedOrders = new Set(bench.map(e => e.bench_order))
     const nextOrder = [1, 2, 3, 4].find(n => !usedOrders.has(n)) ?? null
@@ -271,11 +320,16 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
       await post("return-from-drop", { entry_id: entryId })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to return player.")
-      setRoster(initialRoster)
+      setRoster(snapshot)
     }
   }
 
   const emptyBenchSlots = Math.max(0, SQUAD_RULES.bench - bench.length)
+  // Disables both drag (via useSortable's disabled prop) and tap-to-select
+  // while a swap is in flight — belt-and-braces alongside the isSavingRef
+  // guard in applySwap, so a click and a drag-end firing off the same
+  // gesture can't both register.
+  const effectiveCanEdit = canEdit && !isSaving
 
   return (
     <div className="space-y-6">
@@ -309,7 +363,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
                 <PlayerCard
                   key={entry.id}
                   entry={entry}
-                  canEdit={canEdit}
+                  canEdit={effectiveCanEdit}
                   onSetCaptain={handleSetCaptain}
                   onSetVC={handleSetVC}
                   onMarkDrop={handleMarkDrop}
@@ -346,7 +400,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
                   key={entry.id}
                   entry={entry}
                   benchNumber={entry.bench_order ?? i + 1}
-                  canEdit={canEdit}
+                  canEdit={effectiveCanEdit}
                   onSetCaptain={handleSetCaptain}
                   onSetVC={handleSetVC}
                   onMarkDrop={handleMarkDrop}
