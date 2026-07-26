@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge"
 import { PlayerCard, PlayerCardOverlay } from "./PlayerCard"
 import { DroppedSection } from "./DroppedSection"
 import { TeamBudgetBar } from "./TeamBudgetBar"
+import { validateFormation } from "@/lib/auction-engine"
 import { SQUAD_RULES } from "@/types"
 import type { RosterEntry, Player, Position, DropQuotaSummary } from "@/types"
 
@@ -119,6 +120,14 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
   // squad still being built has no fixed starting XI to validate against.
   const selectedEntry = selectedId ? roster.find(e => e.id === selectedId) ?? null : null
   const squadComplete = activeCount === SQUAD_RULES.total
+
+  // Surfaces an already-illegal Starting XI (e.g. a squad drafted before a
+  // formation-rule fix landed) so it can't silently carry into a real
+  // gameweek unnoticed — swaps themselves are already blocked from
+  // *creating* one, but nothing previously flagged one that already exists.
+  const formationError = squadComplete
+    ? validateFormation(startingXI.map(e => ({ position: e.player.position })))
+    : null
 
   const eligiblePartnerIds = useMemo(() => {
     if (!selectedEntry) return new Set<string>()
@@ -271,6 +280,12 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
   return (
     <div className="space-y-6">
       <TeamBudgetBar budget={teamBudget} totalSpent={totalSpent} activeCount={activeCount} pendingDropCredit={pendingDropCredit} />
+
+      {formationError && (
+        <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+          ⚠ Illegal Starting XI: {formationError}. Swap a bench player in before the next gameweek.
+        </p>
+      )}
 
       {error && (
         <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{error}</p>

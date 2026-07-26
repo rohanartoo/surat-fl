@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { formatMoney, positionColor, cn } from "@/lib/utils"
 import type { LeagueTeam, RosterEntry, Player, Position } from "@/types"
 import { SQUAD_RULES } from "@/types"
-import { POSITION_ORDER } from "@/lib/auction-engine"
+import { POSITION_ORDER, validateFormation } from "@/lib/auction-engine"
 
 async function getAllTeams() {
   const supabase = await createClient()
@@ -58,6 +58,13 @@ export default async function TeamsPage() {
             if (e.player?.fpl_team) acc[e.player.fpl_team] = (acc[e.player.fpl_team] ?? 0) + 1
             return acc
           }, {})
+          // Flags a Starting XI that's already illegal (e.g. drafted before
+          // a formation-rule fix landed) so the AM can spot it here instead
+          // of having to open every team's page individually.
+          const startingXI = entries.filter((e) => e.slot_type === "starting")
+          const formationError = entries.length === SQUAD_RULES.total
+            ? validateFormation(startingXI.map((e) => ({ position: e.player.position })))
+            : null
 
           return (
             <Card key={team.id} className="border-border/60">
@@ -77,6 +84,9 @@ export default async function TeamsPage() {
                     </Badge>
                   </div>
                 </div>
+                {formationError && (
+                  <p className="text-xs text-destructive mt-1">⚠ Illegal Starting XI: {formationError}</p>
+                )}
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-4 gap-3">
