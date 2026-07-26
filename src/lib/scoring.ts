@@ -1,6 +1,6 @@
 import { SQUAD_RULES } from "@/types"
 import type { Position } from "@/types"
-import { validateFormation } from "@/lib/auction-engine"
+import { validateFormation, POSITION_ORDER } from "@/lib/auction-engine"
 import { fetchFplLive } from "@/lib/fpl"
 import type { FplLiveStats } from "@/lib/fpl"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -12,11 +12,57 @@ interface RosterEntry {
   slot_type: "starting" | "bench"
   bench_order: number | null
   position: Position
+  base_price: number
 }
 
 // =============================================
 // AUTO-SUBS
 // =============================================
+
+/**
+ * Real FPL can never save an illegal Starting XI in the first place, so
+ * there's no rule to mirror here — this app could, historically, for squads
+ * drafted before the formation-minimum bug in auto-assignment was fixed.
+ * Rather than scoring an incomplete lineup (missing a whole position) as-is,
+ * repair it first: for each position short of its minimum, bring in the
+ * team's own highest-priority bench player at that position (same bench
+ * order the normal minutes-based subs below use), bumping the cheapest
+ * starter from a position currently over its minimum — "cheapest" being
+ * what the team itself paid, not a ranking imposed on them.
+ */
+function repairIllegalFormation(
+  effectiveXI: { entry: RosterEntry; wasSubbedIn: boolean }[],
+  bench: RosterEntry[],
+  usedBenchIds: Set<string>,
+): { entry: RosterEntry; wasSubbedIn: boolean }[] {
+  if (validateFormation(effectiveXI.map(x => ({ position: x.entry.position }))) === null) {
+    return effectiveXI
+  }
+
+  const next = [...effectiveXI]
+
+  for (const pos of POSITION_ORDER) {
+    for (;;) {
+      const counts: Record<Position, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 }
+      for (const x of next) counts[x.entry.position]++
+      if (counts[pos] >= SQUAD_RULES.min_starting[pos]) break
+
+      const incoming = bench.find(b => b.position === pos && !usedBenchIds.has(b.id))
+      if (!incoming) break // no bench player at this position left to bring in
+
+      const donor = next
+        .filter(x => x.entry.position !== pos && counts[x.entry.position] > SQUAD_RULES.min_starting[x.entry.position])
+        .sort((a, b) => a.entry.base_price - b.entry.base_price)[0]
+      if (!donor) break // no legal donor — bringing this player in would break another position's minimum
+
+      const donorIdx = next.findIndex(x => x.entry.id === donor.entry.id)
+      next[donorIdx] = { entry: incoming, wasSubbedIn: true }
+      usedBenchIds.add(incoming.id)
+    }
+  }
+
+  return next
+}
 
 /**
  * Given a team's starting XI and bench sorted by bench_order, applies FPL
@@ -29,9 +75,15 @@ export function applyAutoSubs(
   bench: RosterEntry[],
   liveStats: Record<number, FplLiveStats>,
 ): { entry: RosterEntry; wasSubbedIn: boolean }[] {
-  const effectiveXI: { entry: RosterEntry; wasSubbedIn: boolean }[] =
-    starting.map(e => ({ entry: e, wasSubbedIn: false }))
   const usedBenchIds = new Set<string>()
+
+  const repaired = repairIllegalFormation(
+    starting.map(e => ({ entry: e, wasSubbedIn: false })),
+    bench,
+    usedBenchIds,
+  )
+
+  const effectiveXI = [...repaired]
 
   for (let i = 0; i < effectiveXI.length; i++) {
     const { entry: starter } = effectiveXI[i]
@@ -109,7 +161,7 @@ export async function syncGameweekPoints(
     supabase.from("teams").select("id"),
     supabase
       .from("roster_entries")
-      .select("id, team_id, player_id, slot_type, bench_order, player:players(position)")
+      .select("id, team_id, player_id, slot_type, bench_order, base_price, player:players(position)")
       .in("slot_type", ["starting", "bench"]),
   ])
   if (!teams || teams.length === 0) return { synced: 0, teams: 0 }
@@ -122,7 +174,7 @@ export async function syncGameweekPoints(
     .not("player_id", "is", null)
 
   // Group roster entries by team_id in memory (avoids N+1)
-  type RosterRow = { id: string; team_id: string; player_id: number; slot_type: string; bench_order: number | null; player: { position: string } }
+  type RosterRow = { id: string; team_id: string; player_id: number; slot_type: string; bench_order: number | null; base_price: number; player: { position: string } }
   const rosterByTeam: Record<string, RosterRow[]> = {}
   for (const row of (allRoster ?? []) as RosterRow[]) {
     if (!rosterByTeam[row.team_id]) rosterByTeam[row.team_id] = []
@@ -144,6 +196,7 @@ export async function syncGameweekPoints(
       slot_type: r.slot_type as "starting" | "bench",
       bench_order: r.bench_order,
       position: r.player.position as Position,
+      base_price: r.base_price,
     }))
 
     const starting = entries.filter(e => e.slot_type === "starting")

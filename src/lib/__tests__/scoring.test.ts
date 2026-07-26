@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { applyAutoSubs, getStandings } from "@/lib/scoring"
+import { validateFormation } from "@/lib/auction-engine"
 import type { Position } from "@/types"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -10,8 +11,9 @@ function makeEntry(
   slot_type: "starting" | "bench",
   position: Position,
   bench_order: number | null = null,
+  base_price = 5,
 ) {
-  return { id: `entry-${++idCounter}`, player_id, slot_type, bench_order, position }
+  return { id: `entry-${++idCounter}`, player_id, slot_type, bench_order, position, base_price }
 }
 
 function stats(minutes: number, total_points = minutes > 0 ? 5 : 0) {
@@ -180,6 +182,42 @@ describe("applyAutoSubs", () => {
     expect(subbedIn).toHaveLength(1)
     expect(subbedIn[0].entry.player_id).toBe(12) // GK bench player
     expect(subbedIn[0].entry.position).toBe("GK")
+  })
+
+  it("repairs an illegal Starting XI (0 FWD) before applying minutes-based subs", () => {
+    // Reproduces the pre-fix auto-assignment bug: 1 GK + 5 DEF + 5 MID
+    // starting, all 3 FWDs benched — real FPL can never save this, so there
+    // was previously no code path that ever tried to fix it.
+    idCounter = 0
+    const starting = [
+      makeEntry(1, "starting", "GK", null, 8),
+      makeEntry(2, "starting", "DEF", null, 6),
+      makeEntry(3, "starting", "DEF", null, 5),
+      makeEntry(4, "starting", "DEF", null, 4),
+      makeEntry(5, "starting", "DEF", null, 3),
+      makeEntry(6, "starting", "DEF", null, 2),
+      makeEntry(7, "starting", "MID", null, 9),
+      makeEntry(8, "starting", "MID", null, 7),
+      makeEntry(9, "starting", "MID", null, 1), // cheapest MID — should be the donor
+      makeEntry(10, "starting", "MID", null, 10),
+      makeEntry(11, "starting", "MID", null, 12),
+    ]
+    const bench = [
+      makeEntry(12, "bench", "GK", 1, 5),
+      makeEntry(13, "bench", "FWD", 2, 20), // highest bench priority FWD — should come in
+      makeEntry(14, "bench", "FWD", 3, 15),
+      makeEntry(15, "bench", "FWD", 4, 10),
+    ]
+    const liveStats = allPlayed()
+    const result = applyAutoSubs(starting, bench, liveStats)
+
+    expect(result).toHaveLength(11)
+    expect(validateFormation(result.map(r => ({ position: r.entry.position })))).toBeNull()
+
+    const subbedIn = result.filter(r => r.wasSubbedIn)
+    expect(subbedIn).toHaveLength(1)
+    expect(subbedIn[0].entry.player_id).toBe(13) // first-priority bench FWD
+    expect(result.find(r => r.entry.player_id === 9)).toBeUndefined() // cheapest MID bumped
   })
 })
 
