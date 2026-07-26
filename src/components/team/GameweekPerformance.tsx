@@ -58,11 +58,6 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
     setSelectedGw(gw)
     latestRequestGw.current = gw
 
-    if (gw === initialGw) {
-      setData(initialData) // already have SSR data for this one
-      return
-    }
-
     setLoading(true)
     try {
       const result = await fetchPerformance(teamId, gw)
