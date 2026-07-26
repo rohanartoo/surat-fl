@@ -3,7 +3,10 @@ import { getProfile } from "@/lib/roles"
 import { notFound } from "next/navigation"
 import { SquadManager } from "@/components/team/SquadManager"
 import { AdminTeamControls } from "@/components/settings/AdminTeamControls"
+import { GameweekPerformance } from "@/components/team/GameweekPerformance"
 import { getDropQuota } from "@/lib/drops"
+import { getTeamGameweekPerformance, getLastSyncedGameweek } from "@/lib/scoring"
+import { fetchCurrentGameweek } from "@/lib/fpl"
 import type { LeagueTeam, Player, RosterEntry, DropQuotaSummary, AuctionType } from "@/types"
 
 interface PageProps {
@@ -49,6 +52,18 @@ export default async function TeamPage({ params }: PageProps) {
 
   const dropsLocked = auction?.status === "active"
 
+  // Bounds the GW picker and picks a sensible default to load without an
+  // empty flash — the currently active GW if FPL has one, else whatever we
+  // last actually synced, else GW1.
+  const supabase = await createClient()
+  const [fplCurrentGw, lastSyncedGw] = await Promise.all([
+    fetchCurrentGameweek(),
+    getLastSyncedGameweek(supabase),
+  ])
+  const currentGw = fplCurrentGw ?? lastSyncedGw ?? 1
+  const initialGw = lastSyncedGw ?? currentGw
+  const initialGwPerformance = await getTeamGameweekPerformance(team.id, initialGw, supabase)
+
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Header */}
@@ -72,6 +87,13 @@ export default async function TeamPage({ params }: PageProps) {
         canEdit={canEdit}
         quotaSummary={quotaSummary}
         dropsLocked={dropsLocked}
+      />
+
+      <GameweekPerformance
+        teamId={team.id}
+        currentGw={currentGw}
+        initialGw={initialGw}
+        initialData={initialGwPerformance}
       />
 
       {/* Admin controls — only visible to admin, only when the team has a linked profile */}

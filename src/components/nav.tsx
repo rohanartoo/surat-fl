@@ -7,12 +7,13 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Gavel, Users, Trophy, Settings, LogOut } from "lucide-react"
+import { LayoutDashboard, Gavel, Users, User, Trophy, Settings, LogOut } from "lucide-react"
 import type { Role } from "@/types"
 
-const navItems = [
+const navItems: { href: string; label: string; icon: typeof LayoutDashboard; roles?: Role[] }[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/auction", label: "Auction", icon: Gavel },
+  { href: "/my-team", label: "My Team", icon: User, roles: ["team"] },
   { href: "/teams", label: "Teams", icon: Users },
   { href: "/standings", label: "Standings", icon: Trophy },
   { href: "/settings",  label: "Settings",  icon: Settings },
@@ -63,7 +64,7 @@ export function Nav({ displayName, role }: NavProps) {
 
           {/* Nav links */}
           <nav className="flex items-center gap-1">
-            {navItems.map(({ href, label, icon: Icon }) => (
+            {navItems.filter(item => !item.roles || item.roles.includes(role)).map(({ href, label, icon: Icon }) => (
               <Link key={href} href={href}>
                 <Button
                   variant="ghost"

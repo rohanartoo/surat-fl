@@ -243,6 +243,22 @@ export interface TeamTransferRecord {
   points_penalty: number
 }
 
+export interface GameweekStatBreakdown {
+  minutes: number
+  total_points: number
+  goals_scored: number
+  assists: number
+  clean_sheets: number
+  goals_conceded: number
+  own_goals: number
+  penalties_saved: number
+  penalties_missed: number
+  yellow_cards: number
+  red_cards: number
+  saves: number
+  bonus: number
+}
+
 export interface GameweekPoints {
   id: string
   team_id: string
@@ -250,6 +266,9 @@ export interface GameweekPoints {
   player_id: number | null  // null for drop-penalty rows
   points: number
   was_subbed_in: boolean
+  stat_breakdown: GameweekStatBreakdown | null
+  is_captain: boolean
+  subbed_out_player_id: number | null
   created_at: string
   player?: Player
 }

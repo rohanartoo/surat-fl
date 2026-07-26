@@ -1,5 +1,5 @@
 import { SQUAD_RULES } from "@/types"
-import type { Position } from "@/types"
+import type { Position, GameweekStatBreakdown } from "@/types"
 import { validateFormation, POSITION_ORDER } from "@/lib/auction-engine"
 import { fetchFplLive } from "@/lib/fpl"
 import type { FplLiveStats } from "@/lib/fpl"
@@ -13,6 +13,8 @@ interface RosterEntry {
   bench_order: number | null
   position: Position
   base_price: number
+  is_captain: boolean
+  is_vice_captain: boolean
 }
 
 // =============================================
@@ -31,10 +33,10 @@ interface RosterEntry {
  * what the team itself paid, not a ranking imposed on them.
  */
 function repairIllegalFormation(
-  effectiveXI: { entry: RosterEntry; wasSubbedIn: boolean }[],
+  effectiveXI: { entry: RosterEntry; wasSubbedIn: boolean; subbedOutPlayerId?: number }[],
   bench: RosterEntry[],
   usedBenchIds: Set<string>,
-): { entry: RosterEntry; wasSubbedIn: boolean }[] {
+): { entry: RosterEntry; wasSubbedIn: boolean; subbedOutPlayerId?: number }[] {
   if (validateFormation(effectiveXI.map(x => ({ position: x.entry.position }))) === null) {
     return effectiveXI
   }
@@ -56,7 +58,7 @@ function repairIllegalFormation(
       if (!donor) break // no legal donor — bringing this player in would break another position's minimum
 
       const donorIdx = next.findIndex(x => x.entry.id === donor.entry.id)
-      next[donorIdx] = { entry: incoming, wasSubbedIn: true }
+      next[donorIdx] = { entry: incoming, wasSubbedIn: true, subbedOutPlayerId: donor.entry.player_id }
       usedBenchIds.add(incoming.id)
     }
   }
@@ -74,7 +76,7 @@ export function applyAutoSubs(
   starting: RosterEntry[],
   bench: RosterEntry[],
   liveStats: Record<number, FplLiveStats>,
-): { entry: RosterEntry; wasSubbedIn: boolean }[] {
+): { entry: RosterEntry; wasSubbedIn: boolean; subbedOutPlayerId?: number }[] {
   const usedBenchIds = new Set<string>()
 
   const repaired = repairIllegalFormation(
@@ -103,13 +105,40 @@ export function applyAutoSubs(
       )
       if (validateFormation(simPositions) !== null) continue
 
-      effectiveXI[i] = { entry: bencher, wasSubbedIn: true }
+      effectiveXI[i] = { entry: bencher, wasSubbedIn: true, subbedOutPlayerId: starter.player_id }
       usedBenchIds.add(bencher.id)
       break
     }
   }
 
   return effectiveXI
+}
+
+// =============================================
+// CAPTAIN
+// =============================================
+
+/**
+ * Real FPL rule: the captain's points double, but only if they actually
+ * featured — if they didn't play (or got auto-subbed/repaired out of the
+ * final XI entirely), the armband passes to the vice-captain under the same
+ * condition. Returns null if neither played (no doubling that gameweek).
+ */
+export function determineEffectiveCaptain(
+  allEntries: RosterEntry[],
+  effectiveXI: { entry: RosterEntry }[],
+  liveStats: Record<number, FplLiveStats>,
+): number | null {
+  const playedInEffectiveXI = (playerId: number) =>
+    effectiveXI.some(x => x.entry.player_id === playerId) && (liveStats[playerId]?.minutes ?? 0) > 0
+
+  const captain = allEntries.find(e => e.is_captain)
+  if (captain && playedInEffectiveXI(captain.player_id)) return captain.player_id
+
+  const vice = allEntries.find(e => e.is_vice_captain)
+  if (vice && playedInEffectiveXI(vice.player_id)) return vice.player_id
+
+  return null
 }
 
 // =============================================
@@ -138,7 +167,7 @@ export async function syncGameweekPoints(
   if (opts.preserveRoster) {
     const { data: existing } = await supabase
       .from("gameweek_points")
-      .select("id, player_id")
+      .select("id, player_id, is_captain")
       .eq("gameweek", gw)
       .not("player_id", "is", null)
 
@@ -147,10 +176,13 @@ export async function syncGameweekPoints(
     }
 
     let updated = 0
-    for (const row of existing as { id: string; player_id: number }[]) {
-      const points = liveStats[row.player_id]?.total_points ?? 0
+    for (const row of existing as { id: string; player_id: number; is_captain: boolean }[]) {
+      const stats = liveStats[row.player_id]
+      const basePoints = stats?.total_points ?? 0
       const { error } = await supabase
-        .from("gameweek_points").update({ points }).eq("id", row.id)
+        .from("gameweek_points")
+        .update({ points: row.is_captain ? basePoints * 2 : basePoints, stat_breakdown: stats ?? null })
+        .eq("id", row.id)
       if (error) throw new Error(`syncGameweekPoints update: ${error.message}`)
       updated++
     }
@@ -161,7 +193,7 @@ export async function syncGameweekPoints(
     supabase.from("teams").select("id"),
     supabase
       .from("roster_entries")
-      .select("id, team_id, player_id, slot_type, bench_order, base_price, player:players(position)")
+      .select("id, team_id, player_id, slot_type, bench_order, base_price, is_captain, is_vice_captain, player:players(position)")
       .in("slot_type", ["starting", "bench"]),
   ])
   if (!teams || teams.length === 0) return { synced: 0, teams: 0 }
@@ -174,7 +206,7 @@ export async function syncGameweekPoints(
     .not("player_id", "is", null)
 
   // Group roster entries by team_id in memory (avoids N+1)
-  type RosterRow = { id: string; team_id: string; player_id: number; slot_type: string; bench_order: number | null; base_price: number; player: { position: string } }
+  type RosterRow = { id: string; team_id: string; player_id: number; slot_type: string; bench_order: number | null; base_price: number; is_captain: boolean; is_vice_captain: boolean; player: { position: string } }
   const rosterByTeam: Record<string, RosterRow[]> = {}
   for (const row of (allRoster ?? []) as RosterRow[]) {
     if (!rosterByTeam[row.team_id]) rosterByTeam[row.team_id] = []
@@ -187,6 +219,9 @@ export async function syncGameweekPoints(
     player_id: number
     points: number
     was_subbed_in: boolean
+    stat_breakdown: FplLiveStats | null
+    is_captain: boolean
+    subbed_out_player_id: number | null
   }[] = []
 
   for (const team of teams as { id: string }[]) {
@@ -197,6 +232,8 @@ export async function syncGameweekPoints(
       bench_order: r.bench_order,
       position: r.player.position as Position,
       base_price: r.base_price,
+      is_captain: r.is_captain,
+      is_vice_captain: r.is_vice_captain,
     }))
 
     const starting = entries.filter(e => e.slot_type === "starting")
@@ -212,15 +249,23 @@ export async function syncGameweekPoints(
     // Only run auto-subs when starting XI is complete
     const effectiveXI = starting.length === SQUAD_RULES.starting
       ? applyAutoSubs(starting, bench, liveStats)
-      : starting.map(e => ({ entry: e, wasSubbedIn: false }))
+      : starting.map(e => ({ entry: e, wasSubbedIn: false, subbedOutPlayerId: undefined as number | undefined }))
 
-    for (const { entry, wasSubbedIn } of effectiveXI) {
+    const captainId = determineEffectiveCaptain(entries, effectiveXI, liveStats)
+
+    for (const { entry, wasSubbedIn, subbedOutPlayerId } of effectiveXI) {
+      const stats = liveStats[entry.player_id] ?? null
+      const basePoints = stats?.total_points ?? 0
+      const isEffectiveCaptain = entry.player_id === captainId
       rows.push({
         team_id: team.id,
         gameweek: gw,
         player_id: entry.player_id,
-        points: liveStats[entry.player_id]?.total_points ?? 0,
+        points: isEffectiveCaptain ? basePoints * 2 : basePoints,
         was_subbed_in: wasSubbedIn,
+        stat_breakdown: stats,
+        is_captain: isEffectiveCaptain,
+        subbed_out_player_id: subbedOutPlayerId ?? null,
       })
     }
   }
@@ -441,4 +486,87 @@ export async function getGameweekHighlights(
   }
 
   return { gameweek: gw, playerOfTheWeek, topTeam }
+}
+
+// =============================================
+// TEAM GAMEWEEK PERFORMANCE
+// =============================================
+
+export interface TeamGameweekPlayerPerformance {
+  player_id: number
+  web_name: string
+  position: Position
+  points: number
+  was_subbed_in: boolean
+  is_captain: boolean
+  stat_breakdown: GameweekStatBreakdown | null
+  subbed_out_player_id: number | null
+  subbed_out_web_name: string | null
+}
+
+export interface TeamGameweekPerformance {
+  gameweek: number
+  team_total: number
+  players: TeamGameweekPlayerPerformance[]
+}
+
+/**
+ * Powers the "My Team" gameweek-performance view: every scored player for
+ * this team+GW (already the effective XI computed at sync time — see
+ * syncGameweekPoints), each with its stat breakdown, captain flag, and — for
+ * auto-subbed-in players — the name of whoever they replaced.
+ */
+export async function getTeamGameweekPerformance(
+  teamId: string,
+  gw: number,
+  supabase: SupabaseClient,
+): Promise<TeamGameweekPerformance> {
+  const { data } = await supabase
+    .from("gameweek_points")
+    .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, player:players(web_name, position)")
+    .eq("team_id", teamId)
+    .eq("gameweek", gw)
+    .not("player_id", "is", null)
+
+  type Row = {
+    player_id: number
+    points: number
+    was_subbed_in: boolean
+    is_captain: boolean
+    stat_breakdown: GameweekStatBreakdown | null
+    subbed_out_player_id: number | null
+    player: { web_name: string; position: Position } | null
+  }
+  const rows = (data ?? []) as Row[]
+
+  const subbedOutIds = [...new Set(rows.map(r => r.subbed_out_player_id).filter((id): id is number => id != null))]
+  const subbedOutNames: Record<number, string> = {}
+  if (subbedOutIds.length > 0) {
+    const { data: subbedOutPlayers } = await supabase
+      .from("players")
+      .select("id, web_name")
+      .in("id", subbedOutIds)
+    for (const p of (subbedOutPlayers ?? []) as { id: number; web_name: string }[]) {
+      subbedOutNames[p.id] = p.web_name
+    }
+  }
+
+  const players: TeamGameweekPlayerPerformance[] = rows
+    .filter(r => r.player)
+    .map(r => ({
+      player_id: r.player_id,
+      web_name: r.player!.web_name,
+      position: r.player!.position,
+      points: r.points,
+      was_subbed_in: r.was_subbed_in,
+      is_captain: r.is_captain,
+      stat_breakdown: r.stat_breakdown,
+      subbed_out_player_id: r.subbed_out_player_id,
+      subbed_out_web_name: r.subbed_out_player_id != null ? subbedOutNames[r.subbed_out_player_id] ?? null : null,
+    }))
+    .sort((a, b) => POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position))
+
+  const team_total = players.reduce((s, p) => s + p.points, 0)
+
+  return { gameweek: gw, team_total, players }
 }

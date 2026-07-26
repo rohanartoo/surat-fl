@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
-import { applyAutoSubs, getStandings } from "@/lib/scoring"
+import { applyAutoSubs, determineEffectiveCaptain, getStandings } from "@/lib/scoring"
 import { validateFormation } from "@/lib/auction-engine"
+import type { FplLiveStats } from "@/lib/fpl"
 import type { Position } from "@/types"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -12,12 +13,18 @@ function makeEntry(
   position: Position,
   bench_order: number | null = null,
   base_price = 5,
+  is_captain = false,
+  is_vice_captain = false,
 ) {
-  return { id: `entry-${++idCounter}`, player_id, slot_type, bench_order, position, base_price }
+  return { id: `entry-${++idCounter}`, player_id, slot_type, bench_order, position, base_price, is_captain, is_vice_captain }
 }
 
 function stats(minutes: number, total_points = minutes > 0 ? 5 : 0) {
-  return { minutes, total_points }
+  return {
+    minutes, total_points,
+    goals_scored: 0, assists: 0, clean_sheets: 0, goals_conceded: 0, own_goals: 0,
+    penalties_saved: 0, penalties_missed: 0, yellow_cards: 0, red_cards: 0, saves: 0, bonus: 0,
+  }
 }
 
 // A standard 4-4-2 starting XI with player IDs 1–11
@@ -47,7 +54,7 @@ function makeSquad() {
 
 // All played
 function allPlayed() {
-  const live: Record<number, { minutes: number; total_points: number }> = {}
+  const live: Record<number, FplLiveStats> = {}
   for (let i = 1; i <= 15; i++) live[i] = stats(90)
   return live
 }
@@ -75,6 +82,7 @@ describe("applyAutoSubs", () => {
     const subbedIn = result.filter(r => r.wasSubbedIn)
     expect(subbedIn).toHaveLength(1)
     expect(subbedIn[0].entry.player_id).toBe(13) // DEF bench player (first valid non-GK)
+    expect(subbedIn[0].subbedOutPlayerId).toBe(10) // the FWD who didn't play
   })
 
   it("respects bench priority — skips bench players who didn't play", () => {
@@ -108,7 +116,7 @@ describe("applyAutoSubs", () => {
       makeEntry(11, "starting", "FWD"),
     ]
     const bench3 = [makeEntry(20, "bench", "FWD", 1)]
-    const liveStats: Record<number, { minutes: number; total_points: number }> = {}
+    const liveStats: Record<number, FplLiveStats> = {}
     for (let i = 1; i <= 11; i++) liveStats[i] = stats(90)
     liveStats[20] = stats(90)
     liveStats[2] = stats(0) // DEF starter didn't play
@@ -182,6 +190,7 @@ describe("applyAutoSubs", () => {
     expect(subbedIn).toHaveLength(1)
     expect(subbedIn[0].entry.player_id).toBe(12) // GK bench player
     expect(subbedIn[0].entry.position).toBe("GK")
+    expect(subbedIn[0].subbedOutPlayerId).toBe(1) // the GK who didn't play
   })
 
   it("repairs an illegal Starting XI (0 FWD) before applying minutes-based subs", () => {
@@ -217,7 +226,47 @@ describe("applyAutoSubs", () => {
     const subbedIn = result.filter(r => r.wasSubbedIn)
     expect(subbedIn).toHaveLength(1)
     expect(subbedIn[0].entry.player_id).toBe(13) // first-priority bench FWD
+    expect(subbedIn[0].subbedOutPlayerId).toBe(9) // cheapest MID, bumped
     expect(result.find(r => r.entry.player_id === 9)).toBeUndefined() // cheapest MID bumped
+  })
+})
+
+// ─── determineEffectiveCaptain ─────────────────────────────────────────────────
+
+describe("determineEffectiveCaptain", () => {
+  it("doubles the captain when they played", () => {
+    const { starting, bench } = makeSquad()
+    starting[0].is_captain = true // player 1, GK
+    const liveStats = allPlayed()
+    const effectiveXI = applyAutoSubs(starting, bench, liveStats)
+    expect(determineEffectiveCaptain([...starting, ...bench], effectiveXI, liveStats)).toBe(1)
+  })
+
+  it("falls back to vice-captain when captain didn't play (and was auto-subbed out)", () => {
+    const { starting, bench } = makeSquad()
+    starting[9].is_captain = true // player 10, FWD
+    starting[10].is_vice_captain = true // player 11, FWD — stays in and plays
+    const liveStats = allPlayed()
+    liveStats[10] = stats(0) // captain didn't play — gets auto-subbed out
+    const effectiveXI = applyAutoSubs(starting, bench, liveStats)
+    expect(effectiveXI.some(x => x.entry.player_id === 10)).toBe(false) // confirms captain left the XI
+    expect(determineEffectiveCaptain([...starting, ...bench], effectiveXI, liveStats)).toBe(11)
+  })
+
+  it("returns null when neither captain nor vice-captain played", () => {
+    const { starting, bench } = makeSquad()
+    starting[9].is_captain = true // player 10
+    starting[10].is_vice_captain = true // player 11
+    const liveStats = allPlayed()
+    liveStats[10] = stats(0)
+    liveStats[11] = stats(0)
+    // No bench players played either, so neither gets auto-subbed to safety
+    liveStats[12] = stats(0)
+    liveStats[13] = stats(0)
+    liveStats[14] = stats(0)
+    liveStats[15] = stats(0)
+    const effectiveXI = applyAutoSubs(starting, bench, liveStats)
+    expect(determineEffectiveCaptain([...starting, ...bench], effectiveXI, liveStats)).toBeNull()
   })
 })
 

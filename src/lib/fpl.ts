@@ -6,6 +6,17 @@ const FPL_BASE = "https://fantasy.premierleague.com/api"
 export interface FplLiveStats {
   minutes: number
   total_points: number
+  goals_scored: number
+  assists: number
+  clean_sheets: number
+  goals_conceded: number
+  own_goals: number
+  penalties_saved: number
+  penalties_missed: number
+  yellow_cards: number
+  red_cards: number
+  saves: number
+  bonus: number
 }
 
 export async function fetchFplLive(gw: number): Promise<Record<number, FplLiveStats>> {
