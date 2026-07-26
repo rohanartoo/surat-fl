@@ -371,11 +371,47 @@ export function MyActionPanel() {
 export function TeamBidConsole() {
   const { currentLot, bids, teams, myTeamId, myRole, filledSlotsByTeam, clubCountsByTeam, auction } = useAuction()
 
+  // Only show teams participating in this auction
+  const auctionOrder = (auction?.auction_order as string[] | null) ?? null
+  const participatingTeams = auctionOrder
+    ? teams.filter(t => auctionOrder.includes(t.id)).sort((a, b) => auctionOrder.indexOf(a.id) - auctionOrder.indexOf(b.id))
+    : teams
+
+  // Between lots (no open lot yet, or the last one just concluded) — keep
+  // showing the budget/filled-slots snapshot instead of blanking it out
+  // until the next nomination. current_position_category is a property of
+  // the auction as a whole, not the lot, so it's still available here.
   if (!currentLot || currentLot.phase === "concluded" || currentLot.phase === "pending") {
+    const currentPos = (auction?.current_position_category ?? null) as Position | null
     return (
       <Card className="border-border/60">
-        <CardContent className="py-8 text-center">
-          <p className="text-sm text-muted-foreground">Waiting for next player…</p>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Teams</CardTitle>
+          <p className="text-xs text-muted-foreground italic">Waiting for next player…</p>
+        </CardHeader>
+        <CardContent className="space-y-1 px-3 pb-3">
+          {participatingTeams.map(team => (
+            currentPos ? (
+              <TeamBidRow
+                key={team.id}
+                team={team}
+                bid={undefined}
+                phase="bidding"
+                filledSlots={filledSlotsByTeam[team.id]?.[currentPos] ?? 0}
+                position={currentPos}
+                isCurrentTurn={false}
+                isClubCapped={false}
+              />
+            ) : (
+              <div key={team.id} className="flex items-center justify-between py-2 px-3 rounded-md">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
+                  <span className="text-sm font-medium">{team.short_name}</span>
+                </div>
+                <span className="text-xs font-mono text-muted-foreground">{formatMoney(team.budget)}</span>
+              </div>
+            )
+          ))}
         </CardContent>
       </Card>
     )
@@ -385,12 +421,6 @@ export function TeamBidConsole() {
   const position = player.position as Position
   const turnTeam = current_turn_team_id ? teams.find(t => t.id === current_turn_team_id) : null
   const isMyTurn = current_turn_team_id === myTeamId
-
-  // Only show teams participating in this auction
-  const auctionOrder = (auction?.auction_order as string[] | null) ?? null
-  const participatingTeams = auctionOrder
-    ? teams.filter(t => auctionOrder.includes(t.id)).sort((a, b) => auctionOrder.indexOf(a.id) - auctionOrder.indexOf(b.id))
-    : teams
 
   return (
     <Card className="border-border/60">
