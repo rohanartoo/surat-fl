@@ -247,6 +247,8 @@ function MyBidPanel({
       )
     }
 
+    const cannotAffordMinBid = minBid > maxBid
+
     return (
       <div className="space-y-3 p-4 rounded-lg border border-amber-500/50 bg-amber-500/10">
         <div className="flex items-center justify-between">
@@ -256,29 +258,35 @@ function MyBidPanel({
             <span>Max: {formatMoney(maxBid)}</span>
           </div>
         </div>
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">£</span>
-            <Input
-              type="number"
-              min={minBid}
-              max={maxBid}
-              step={1}
-              placeholder={String(minBid)}
-              className="pl-7 font-mono"
-              value={bidAmount}
-              onChange={e => setBidAmount(e.target.value)}
-              autoFocus
-            />
+        {cannotAffordMinBid ? (
+          <p className="text-xs text-destructive">
+            Can&apos;t afford this player — you need {formatMoney(minBid)} but your max bid is {formatMoney(maxBid)}.
+          </p>
+        ) : (
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">£</span>
+              <Input
+                type="number"
+                min={minBid}
+                max={maxBid}
+                step={1}
+                placeholder={String(minBid)}
+                className="pl-7 font-mono"
+                value={bidAmount}
+                onChange={e => setBidAmount(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <Button
+              className="w-16 shrink-0"
+              disabled={loading || !bidAmount || isNaN(parsedAmount)}
+              onClick={() => setPendingAction("bid")}
+            >
+              Bid
+            </Button>
           </div>
-          <Button
-            className="w-16 shrink-0"
-            disabled={loading || !bidAmount || isNaN(parsedAmount)}
-            onClick={() => setPendingAction("bid")}
-          >
-            Bid
-          </Button>
-        </div>
+        )}
         <Button
           variant="outline"
           className="w-full text-muted-foreground hover:text-destructive hover:border-destructive/50"
