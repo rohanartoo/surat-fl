@@ -65,7 +65,7 @@ export default async function TeamPage({ params }: PageProps) {
   const initialGwPerformance = await getTeamGameweekPerformance(team.id, initialGw, supabase)
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6 max-w-5xl">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -81,20 +81,24 @@ export default async function TeamPage({ params }: PageProps) {
         />
       </div>
 
-      <SquadManager
-        initialRoster={roster}
-        teamBudget={team.budget}
-        canEdit={canEdit}
-        quotaSummary={quotaSummary}
-        dropsLocked={dropsLocked}
-      />
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
+        <SquadManager
+          initialRoster={roster}
+          teamBudget={team.budget}
+          canEdit={canEdit}
+          quotaSummary={quotaSummary}
+          dropsLocked={dropsLocked}
+        />
 
-      <GameweekPerformance
-        teamId={team.id}
-        currentGw={currentGw}
-        initialGw={initialGw}
-        initialData={initialGwPerformance}
-      />
+        <div className="lg:sticky lg:top-20">
+          <GameweekPerformance
+            teamId={team.id}
+            currentGw={currentGw}
+            initialGw={initialGw}
+            initialData={initialGwPerformance}
+          />
+        </div>
+      </div>
 
       {/* Admin controls — only visible to admin, only when the team has a linked profile */}
       {isAdmin && teamProfile && (

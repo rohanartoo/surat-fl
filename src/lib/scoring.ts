@@ -222,6 +222,8 @@ export async function syncGameweekPoints(
     stat_breakdown: FplLiveStats | null
     is_captain: boolean
     subbed_out_player_id: number | null
+    slot_type: "starting" | "bench"
+    counted: boolean
   }[] = []
 
   for (const team of teams as { id: string }[]) {
@@ -252,6 +254,7 @@ export async function syncGameweekPoints(
       : starting.map(e => ({ entry: e, wasSubbedIn: false, subbedOutPlayerId: undefined as number | undefined }))
 
     const captainId = determineEffectiveCaptain(entries, effectiveXI, liveStats)
+    const countedIds = new Set(effectiveXI.map(x => x.entry.player_id))
 
     for (const { entry, wasSubbedIn, subbedOutPlayerId } of effectiveXI) {
       const stats = liveStats[entry.player_id] ?? null
@@ -266,6 +269,28 @@ export async function syncGameweekPoints(
         stat_breakdown: stats,
         is_captain: isEffectiveCaptain,
         subbed_out_player_id: subbedOutPlayerId ?? null,
+        slot_type: entry.slot_type,
+        counted: true,
+      })
+    }
+
+    // Informational-only rows: original starters who got subbed out, and
+    // bench players never used. Not part of the team total, but needed so
+    // the per-GW squad view can show the full 15-man snapshot for that week.
+    for (const entry of entries) {
+      if (countedIds.has(entry.player_id)) continue
+      const stats = liveStats[entry.player_id] ?? null
+      rows.push({
+        team_id: team.id,
+        gameweek: gw,
+        player_id: entry.player_id,
+        points: stats?.total_points ?? 0,
+        was_subbed_in: false,
+        stat_breakdown: stats,
+        is_captain: false,
+        subbed_out_player_id: null,
+        slot_type: entry.slot_type,
+        counted: false,
       })
     }
   }
@@ -347,7 +372,7 @@ export interface StandingRow {
 export async function getStandings(supabase: SupabaseClient): Promise<StandingRow[]> {
   const [{ data: teams }, { data: pointRows }] = await Promise.all([
     supabase.from("teams").select("id, display_name, short_name, color"),
-    supabase.from("gameweek_points").select("team_id, gameweek, points"),
+    supabase.from("gameweek_points").select("team_id, gameweek, points").eq("counted", true),
   ])
 
   const standings: Record<string, StandingRow> = {}
@@ -443,7 +468,7 @@ export async function getGameweekHighlights(
   const [{ data: pointRows }, { data: teams }] = await Promise.all([
     supabase
       .from("gameweek_points")
-      .select("team_id, player_id, points, was_subbed_in, player:players(web_name, first_name, second_name, fpl_team_short)")
+      .select("team_id, player_id, points, was_subbed_in, counted, player:players(web_name, first_name, second_name, fpl_team_short)")
       .eq("gameweek", gw)
       .not("player_id", "is", null),
     supabase.from("teams").select("id, display_name, short_name, color"),
@@ -465,12 +490,14 @@ export async function getGameweekHighlights(
     }
   }
 
-  // Top team — highest sum of points for the GW
+  // Top team — highest sum of points for the GW (only rows that counted
+  // towards the team's total, i.e. the effective Starting XI)
   let topTeam: GameweekHighlights["topTeam"] = null
   if (pointRows && teams) {
     const teamMap = Object.fromEntries((teams as { id: string; display_name: string; short_name: string; color: string }[]).map(t => [t.id, t]))
     const totals: Record<string, number> = {}
     for (const row of pointRows) {
+      if (!row.counted) continue
       totals[row.team_id] = (totals[row.team_id] ?? 0) + row.points
     }
     const topTeamId = Object.entries(totals).sort((a, b) => b[1] - a[1])[0]?.[0]
@@ -502,19 +529,23 @@ export interface TeamGameweekPlayerPerformance {
   stat_breakdown: GameweekStatBreakdown | null
   subbed_out_player_id: number | null
   subbed_out_web_name: string | null
+  slot_type: "starting" | "bench"
+  counted: boolean
 }
 
 export interface TeamGameweekPerformance {
   gameweek: number
   team_total: number
-  players: TeamGameweekPlayerPerformance[]
+  starting: TeamGameweekPlayerPerformance[]
+  bench: TeamGameweekPlayerPerformance[]
 }
 
 /**
- * Powers the "My Team" gameweek-performance view: every scored player for
- * this team+GW (already the effective XI computed at sync time — see
- * syncGameweekPoints), each with its stat breakdown, captain flag, and — for
- * auto-subbed-in players — the name of whoever they replaced.
+ * Powers the "My Team" gameweek-performance view: the full 15-man squad
+ * snapshot for this team+GW as of sync time (see syncGameweekPoints) split
+ * into starting/bench, each with its stat breakdown, captain flag, whether
+ * it counted towards the team total, and — for auto-subbed-in players — the
+ * name of whoever they replaced.
  */
 export async function getTeamGameweekPerformance(
   teamId: string,
@@ -523,7 +554,7 @@ export async function getTeamGameweekPerformance(
 ): Promise<TeamGameweekPerformance> {
   const { data } = await supabase
     .from("gameweek_points")
-    .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, player:players(web_name, position)")
+    .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, slot_type, counted, player:players(web_name, position)")
     .eq("team_id", teamId)
     .eq("gameweek", gw)
     .not("player_id", "is", null)
@@ -535,6 +566,8 @@ export async function getTeamGameweekPerformance(
     is_captain: boolean
     stat_breakdown: GameweekStatBreakdown | null
     subbed_out_player_id: number | null
+    slot_type: "starting" | "bench" | null
+    counted: boolean
     player: { web_name: string; position: Position } | null
   }
   const rows = (data ?? []) as Row[]
@@ -563,10 +596,16 @@ export async function getTeamGameweekPerformance(
       stat_breakdown: r.stat_breakdown,
       subbed_out_player_id: r.subbed_out_player_id,
       subbed_out_web_name: r.subbed_out_player_id != null ? subbedOutNames[r.subbed_out_player_id] ?? null : null,
+      // Rows synced before this column existed have no slot_type — treat as starting
+      // since only effective-XI rows were ever written back then.
+      slot_type: r.slot_type ?? "starting",
+      counted: r.counted,
     }))
     .sort((a, b) => POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position))
 
-  const team_total = players.reduce((s, p) => s + p.points, 0)
+  const starting = players.filter(p => p.slot_type === "starting")
+  const bench = players.filter(p => p.slot_type === "bench")
+  const team_total = players.filter(p => p.counted).reduce((s, p) => s + p.points, 0)
 
-  return { gameweek: gw, team_total, players }
+  return { gameweek: gw, team_total, starting, bench }
 }

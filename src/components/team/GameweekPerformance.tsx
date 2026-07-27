@@ -16,7 +16,7 @@ import type { TeamGameweekPerformance } from "@/lib/scoring"
 
 const SEASON_LENGTH = 38
 
-const STAT_LABELS: { key: keyof NonNullable<TeamGameweekPerformance["players"][number]["stat_breakdown"]>; label: string }[] = [
+const STAT_LABELS: { key: keyof NonNullable<TeamGameweekPerformance["starting"][number]["stat_breakdown"]>; label: string }[] = [
   { key: "goals_scored", label: "Goals" },
   { key: "assists", label: "Assists" },
   { key: "clean_sheets", label: "Clean sheet" },
@@ -69,7 +69,8 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
     }
   }
 
-  const autoSubs = (data?.players ?? []).filter(p => p.was_subbed_in)
+  const hasData = !!data && (data.starting.length > 0 || data.bench.length > 0)
+  const autoSubs = [...(data?.starting ?? []), ...(data?.bench ?? [])].filter(p => p.was_subbed_in)
 
   return (
     <Card className="border-border/60">
@@ -91,7 +92,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
       <CardContent className="space-y-4">
         {loading ? (
           <p className="text-sm text-muted-foreground italic py-4 text-center">Loading…</p>
-        ) : !data || data.players.length === 0 ? (
+        ) : !hasData ? (
           <p className="text-sm text-muted-foreground italic py-4 text-center">
             No scoring data for GW {selectedGw} yet.
           </p>
@@ -99,14 +100,28 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
           <>
             <div className="flex items-baseline justify-between">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Team total</p>
-              <p className="text-2xl font-semibold font-mono">{data.team_total}</p>
+              <p className="text-2xl font-semibold font-mono">{data!.team_total}</p>
             </div>
 
-            <div className="space-y-1">
-              {data.players.map(p => (
-                <PlayerPointsRow key={p.player_id} player={p} />
-              ))}
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Starting XI</p>
+              <div className="space-y-1">
+                {data!.starting.map(p => (
+                  <PlayerPointsRow key={p.player_id} player={p} />
+                ))}
+              </div>
             </div>
+
+            {data!.bench.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-border/40">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Bench</p>
+                <div className="space-y-1">
+                  {data!.bench.map(p => (
+                    <PlayerPointsRow key={p.player_id} player={p} />
+                  ))}
+                </div>
+              </div>
+            )}
 
             {autoSubs.length > 0 && (
               <div className="space-y-1.5 pt-2 border-t border-border/40">
@@ -127,7 +142,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
   )
 }
 
-function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["players"][number] }) {
+function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting"][number] }) {
   const breakdown = player.stat_breakdown
   const activeStats = breakdown
     ? STAT_LABELS.filter(({ key }) => {
@@ -140,6 +155,7 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["players"
     <div className={cn(
       "flex items-center justify-between py-2 px-2.5 rounded-md",
       player.is_captain && "bg-amber-500/10 ring-1 ring-amber-500/30",
+      !player.counted && "opacity-50",
     )}>
       <div className="flex items-center gap-2.5 min-w-0">
         <PositionBadge position={player.position} />
@@ -156,6 +172,11 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["players"
                 Sub
               </Badge>
             )}
+            {!player.counted && (
+              <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 text-muted-foreground border-border/50">
+                {player.slot_type === "starting" ? "Subbed out" : "Unused"}
+              </Badge>
+            )}
           </div>
           {activeStats.length > 0 ? (
             <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
@@ -170,7 +191,7 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["players"
           )}
         </div>
       </div>
-      <span className="text-sm font-mono font-semibold shrink-0 ml-2">{player.points}</span>
+      <span className={cn("text-sm font-mono font-semibold shrink-0 ml-2", !player.counted && "font-normal")}>{player.points}</span>
     </div>
   )
 }

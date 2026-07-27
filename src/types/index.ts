@@ -269,6 +269,8 @@ export interface GameweekPoints {
   stat_breakdown: GameweekStatBreakdown | null
   is_captain: boolean
   subbed_out_player_id: number | null
+  slot_type: "starting" | "bench" | null
+  counted: boolean
   created_at: string
   player?: Player
 }

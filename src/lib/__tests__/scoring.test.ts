@@ -278,8 +278,12 @@ function makeSupabase(
 ) {
   return {
     from: (table: string) => ({
-      select: () =>
-        Promise.resolve({ data: table === "teams" ? teams : pointRows }),
+      select: () => {
+        const data = table === "teams" ? teams : pointRows
+        const result = Promise.resolve({ data }) as Promise<{ data: unknown }> & { eq: () => Promise<{ data: unknown }> }
+        result.eq = () => Promise.resolve({ data })
+        return result
+      },
     }),
   }
 }

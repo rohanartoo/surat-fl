@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
 
   const { data: rosterRows, error: rosterErr } = await supabase
     .from("roster_entries")
-    .select("team_id, player_id")
+    .select("team_id, player_id, slot_type")
     .in("slot_type", ["starting", "bench"])
 
   if (rosterErr) return NextResponse.json({ error: rosterErr.message }, { status: 500 })
@@ -74,6 +74,8 @@ export async function POST(request: NextRequest) {
       gameweek,
       points: simulatePoints(),
       was_subbed_in: false,
+      slot_type: r.slot_type,
+      counted: r.slot_type === "starting",
     }))
 
     const { error: insertErr } = await supabase.from("gameweek_points").insert(rows)
