@@ -51,8 +51,9 @@ async function post(action: string, body: object) {
   return data
 }
 
-export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary, dropsLocked }: Props) {
+export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary: initialQuotaSummary, dropsLocked }: Props) {
   const [roster, setRoster] = useState<Entry[]>(initialRoster)
+  const [quotaSummary, setQuotaSummary] = useState(initialQuotaSummary)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -299,7 +300,8 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
       : e
     ))
     try {
-      await post("mark-drop", { entry_id: entryId })
+      const result = await post("mark-drop", { entry_id: entryId })
+      if (result.quotaSummary) setQuotaSummary(result.quotaSummary)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to stage drop.")
       setRoster(snapshot)
@@ -317,7 +319,8 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary,
       : e
     ))
     try {
-      await post("return-from-drop", { entry_id: entryId })
+      const result = await post("return-from-drop", { entry_id: entryId })
+      if (result.quotaSummary) setQuotaSummary(result.quotaSummary)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to return player.")
       setRoster(snapshot)

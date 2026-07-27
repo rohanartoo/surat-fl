@@ -3,9 +3,10 @@ import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, assertOwnership } from "@/lib/roles"
 import { validateFormation } from "@/lib/auction-engine"
 import { getCurrentAuction } from "@/lib/auctions"
+import { getDropQuota } from "@/lib/drops"
 import { calcDropPrice } from "@/lib/utils"
 import { SQUAD_RULES } from "@/types"
-import type { Position } from "@/types"
+import type { Position, AuctionType } from "@/types"
 
 function createClient() {
   return createServiceClient(
@@ -207,7 +208,8 @@ async function handleMarkDrop(request: NextRequest) {
     dropped_post_summer: false,
   })
 
-  return NextResponse.json({ success: true, drop_price: dropPrice })
+  const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase)
+  return NextResponse.json({ success: true, drop_price: dropPrice, quotaSummary })
 }
 
 // ─────────────────────────────────────────────
@@ -230,7 +232,7 @@ async function handleReturnFromDrop(request: NextRequest) {
   // Find the current auction. Un-staging, like staging, is only possible
   // before the auction starts — once live, any staged drop has already been
   // locked (see rpc_lock_and_credit_drops) and no longer exists to return.
-  const auction = await getCurrentAuction<{ id: string; status: string }>(supabase, "id, status")
+  const auction = await getCurrentAuction<{ id: string; status: string; type: string }>(supabase, "id, status, type")
   if (!auction) return err("No active auction — staged drops can only be returned during an auction window.")
   if (auction.status !== "pending") return err("This drop has already been locked in and can no longer be returned.")
 
@@ -265,7 +267,8 @@ async function handleReturnFromDrop(request: NextRequest) {
   // Delete the staged drop
   await supabase.from("team_drops").delete().eq("id", drop.id)
 
-  return NextResponse.json({ success: true })
+  const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase)
+  return NextResponse.json({ success: true, quotaSummary })
 }
 
 // ─────────────────────────────────────────────
