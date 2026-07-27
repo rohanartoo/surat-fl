@@ -258,6 +258,45 @@ export function validateFormation(starting: { position: Position }[]): string | 
   return null
 }
 
+// =============================================
+// CAPTAINCY REPAIR
+// =============================================
+
+export interface CaptaincyEntry {
+  id: string
+  base_price: number
+  is_captain: boolean
+  is_vice_captain: boolean
+}
+
+/**
+ * Given the current Starting XI, returns who should hold captain/VC —
+ * unchanged if the existing picks are still valid (i.e. still in the
+ * Starting XI), otherwise backfilling from the Starting XI's own
+ * most-expensive remaining player(s). Mirrors repairIllegalFormation's
+ * philosophy: prefer the team's own signal (what they paid) over an
+ * external ranking.
+ */
+export function repairCaptaincy(
+  starting: CaptaincyEntry[],
+): { captainId: string | null; viceCaptainId: string | null; changed: boolean } {
+  let changed = false
+
+  let captain = starting.find(e => e.is_captain)
+  if (!captain) {
+    captain = [...starting].sort((a, b) => b.base_price - a.base_price)[0]
+    changed = true
+  }
+
+  let vice = starting.find(e => e.is_vice_captain && e.id !== captain?.id)
+  if (!vice) {
+    vice = starting.filter(e => e.id !== captain?.id).sort((a, b) => b.base_price - a.base_price)[0]
+    changed = true
+  }
+
+  return { captainId: captain?.id ?? null, viceCaptainId: vice?.id ?? null, changed }
+}
+
 /**
  * Hard-cap-only version for swap-time validation: never block an incomplete
  * or under-minimum Starting XI (that's an allowed transient state — e.g.

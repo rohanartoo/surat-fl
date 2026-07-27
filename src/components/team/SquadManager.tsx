@@ -93,6 +93,19 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
   // are deleted rather than staying in the "dropped" slot_type.
   const pendingDropCredit = dropped.reduce((s, e) => s + e.base_price, 0)
 
+  // The server may reassign captain/VC as a side effect of a swap/drop
+  // (e.g. the captain got benched and the armband moved to the next-most-
+  // expensive starter) — sync that into local state so it's visible
+  // immediately instead of only after a refresh.
+  function applyCaptaincy(result: { captain_id?: string | null; vice_captain_id?: string | null }) {
+    if (result.captain_id === undefined && result.vice_captain_id === undefined) return
+    setRoster(prev => prev.map(e => ({
+      ...e,
+      is_captain: result.captain_id !== undefined ? e.id === result.captain_id : e.is_captain,
+      is_vice_captain: result.vice_captain_id !== undefined ? e.id === result.vice_captain_id : e.is_vice_captain,
+    })))
+  }
+
   // Optimistically update local state, then sync with server
   const applySwap = useCallback(async (entryId: string, targetSlot: "starting" | "bench", displacedId?: string, newBenchOrder?: number) => {
     // Refuse to start a second swap while one is still in flight — a click
@@ -151,7 +164,8 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
     isSavingRef.current = true
     setIsSaving(true)
     try {
-      await post("swap", { entry_id: entryId, target_slot: targetSlot, bench_order: newBenchOrder, displaced_entry_id: displacedId })
+      const result = await post("swap", { entry_id: entryId, target_slot: targetSlot, bench_order: newBenchOrder, displaced_entry_id: displacedId })
+      applyCaptaincy(result)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Swap failed.")
       // Revert only this attempt — back to what the server last confirmed,
@@ -308,6 +322,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
     try {
       const result = await post("mark-drop", { entry_id: entryId })
       if (result.quotaSummary) setQuotaSummary(result.quotaSummary)
+      applyCaptaincy(result)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to stage drop.")
       setRoster(snapshot)
@@ -317,7 +332,9 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
   async function handleReturnFromDrop(entryId: string) {
     setError(null)
     const snapshot = rosterRef.current
-    // Find next available bench slot optimistically
+    // Optimistically guess bench (the common case) — the server decides the
+    // real placement (it may go straight to an open Starting XI slot; see
+    // chooseSlotType) and the response below corrects this if it guessed wrong.
     const usedOrders = new Set(bench.map(e => e.bench_order))
     const nextOrder = [1, 2, 3, 4].find(n => !usedOrders.has(n)) ?? null
     setRoster(prev => prev.map(e => e.id === entryId
@@ -327,6 +344,13 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
     try {
       const result = await post("return-from-drop", { entry_id: entryId })
       if (result.quotaSummary) setQuotaSummary(result.quotaSummary)
+      if (result.slot_type) {
+        setRoster(prev => prev.map(e => e.id === entryId
+          ? { ...e, slot_type: result.slot_type, bench_order: result.bench_order ?? null }
+          : e
+        ))
+      }
+      applyCaptaincy(result)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to return player.")
       setRoster(snapshot)

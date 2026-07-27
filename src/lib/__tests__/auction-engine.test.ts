@@ -9,7 +9,9 @@ import {
   chooseSlotType,
   validateFormation,
   validateFormationCaps,
+  repairCaptaincy,
 } from "@/lib/auction-engine"
+import type { CaptaincyEntry } from "@/lib/auction-engine"
 import type { Position } from "@/types"
 
 // ─── validateBid ─────────────────────────────────────────────────────────────
@@ -350,5 +352,63 @@ describe("validateFormationCaps", () => {
       ...Array(6).fill(makePos("DEF")),
     ]
     expect(validateFormationCaps(xi)).toMatch(/DEF/)
+  })
+})
+
+// ─── repairCaptaincy ─────────────────────────────────────────────────────────
+
+const makeCaptaincy = (id: string, base_price: number, is_captain = false, is_vice_captain = false): CaptaincyEntry =>
+  ({ id, base_price, is_captain, is_vice_captain })
+
+describe("repairCaptaincy", () => {
+  it("leaves a valid captain and VC unchanged", () => {
+    const starting = [
+      makeCaptaincy("a", 10, true, false),
+      makeCaptaincy("b", 8, false, true),
+      makeCaptaincy("c", 5),
+    ]
+    const result = repairCaptaincy(starting)
+    expect(result).toEqual({ captainId: "a", viceCaptainId: "b", changed: false })
+  })
+
+  it("promotes the existing VC to captain and picks a new VC by price when captain is benched", () => {
+    // Captain no longer appears in the Starting XI list at all (benched)
+    const starting = [
+      makeCaptaincy("b", 8, false, true),
+      makeCaptaincy("c", 12),
+      makeCaptaincy("d", 5),
+    ]
+    const result = repairCaptaincy(starting)
+    // No is_captain=true present -> most expensive starter (c, 12) becomes captain
+    expect(result.captainId).toBe("c")
+    expect(result.changed).toBe(true)
+    // VC must not be the new captain
+    expect(result.viceCaptainId).not.toBe("c")
+  })
+
+  it("picks captain and VC by price (highest, 2nd-highest) when neither is set", () => {
+    const starting = [
+      makeCaptaincy("a", 5),
+      makeCaptaincy("b", 15),
+      makeCaptaincy("c", 10),
+    ]
+    const result = repairCaptaincy(starting)
+    expect(result).toEqual({ captainId: "b", viceCaptainId: "c", changed: true })
+  })
+
+  it("re-picks VC by price when VC is benched but captain is still valid", () => {
+    const starting = [
+      makeCaptaincy("a", 10, true, false),
+      makeCaptaincy("b", 8),
+      makeCaptaincy("c", 12),
+    ]
+    const result = repairCaptaincy(starting)
+    expect(result.captainId).toBe("a")
+    expect(result.viceCaptainId).toBe("c") // most expensive remaining, excluding captain
+    expect(result.changed).toBe(true)
+  })
+
+  it("returns nulls for an empty Starting XI", () => {
+    expect(repairCaptaincy([])).toEqual({ captainId: null, viceCaptainId: null, changed: true })
   })
 })
