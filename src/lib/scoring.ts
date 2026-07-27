@@ -465,14 +465,18 @@ export async function getGameweekHighlights(
   gw: number,
   supabase: SupabaseClient,
 ): Promise<GameweekHighlights> {
-  const [{ data: pointRows }, { data: teams }] = await Promise.all([
+  const [{ data: pointRows, error: pointsErr }, { data: teams }] = await Promise.all([
     supabase
       .from("gameweek_points")
-      .select("team_id, player_id, points, was_subbed_in, counted, player:players(web_name, first_name, second_name, fpl_team_short)")
+      // gameweek_points has two FKs to players (player_id, subbed_out_player_id) —
+      // the embed must be disambiguated or PostgREST errors with "more than one
+      // relationship was found" and silently returns no data.
+      .select("team_id, player_id, points, was_subbed_in, counted, player:players!gameweek_points_player_id_fkey(web_name, first_name, second_name, fpl_team_short)")
       .eq("gameweek", gw)
       .not("player_id", "is", null),
     supabase.from("teams").select("id, display_name, short_name, color"),
   ])
+  if (pointsErr) throw new Error(`getGameweekHighlights: ${pointsErr.message}`)
 
   // Player of the week — highest individual points
   let playerOfTheWeek: GameweekHighlights["playerOfTheWeek"] = null
@@ -552,12 +556,16 @@ export async function getTeamGameweekPerformance(
   gw: number,
   supabase: SupabaseClient,
 ): Promise<TeamGameweekPerformance> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("gameweek_points")
-    .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, slot_type, counted, player:players(web_name, position)")
+    // gameweek_points has two FKs to players (player_id, subbed_out_player_id) —
+    // the embed must be disambiguated or PostgREST errors with "more than one
+    // relationship was found" and silently returns no data.
+    .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, slot_type, counted, player:players!gameweek_points_player_id_fkey(web_name, position)")
     .eq("team_id", teamId)
     .eq("gameweek", gw)
     .not("player_id", "is", null)
+  if (error) throw new Error(`getTeamGameweekPerformance: ${error.message}`)
 
   type Row = {
     player_id: number

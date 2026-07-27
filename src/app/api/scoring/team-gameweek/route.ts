@@ -33,6 +33,10 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createClient()
-  const performance = await getTeamGameweekPerformance(team_id, gameweek, supabase)
-  return NextResponse.json(performance)
+  try {
+    const performance = await getTeamGameweekPerformance(team_id, gameweek, supabase)
+    return NextResponse.json(performance)
+  } catch (e) {
+    return err(e instanceof Error ? e.message : "Failed to load performance.", 500)
+  }
 }

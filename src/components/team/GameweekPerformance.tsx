@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import type { TeamGameweekPerformance } from "@/lib/scoring"
 
@@ -97,7 +98,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
             No scoring data for GW {selectedGw} yet.
           </p>
         ) : (
-          <>
+          <TooltipProvider delayDuration={150}>
             <div className="flex items-baseline justify-between">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Team total</p>
               <p className="text-2xl font-semibold font-mono">{data!.team_total}</p>
@@ -135,7 +136,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
                 ))}
               </div>
             )}
-          </>
+          </TooltipProvider>
         )}
       </CardContent>
     </Card>
@@ -151,6 +152,16 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting
       })
     : []
 
+  const pointsEl = (
+    <span className={cn(
+      "text-sm font-mono font-semibold shrink-0 ml-2",
+      !player.counted && "font-normal",
+      breakdown && "underline decoration-dotted decoration-muted-foreground/50 underline-offset-2 cursor-help",
+    )}>
+      {player.points}
+    </span>
+  )
+
   return (
     <div className={cn(
       "flex items-center justify-between py-2 px-2.5 rounded-md",
@@ -159,39 +170,35 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting
     )}>
       <div className="flex items-center gap-2.5 min-w-0">
         <PositionBadge position={player.position} />
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <p className="text-sm font-medium truncate">{player.web_name}</p>
-            {player.is_captain && (
-              <Badge variant="secondary" className="text-[10px] h-4 px-1 py-0 uppercase bg-amber-500/20 text-amber-600 border-0">
-                C ×2
-              </Badge>
-            )}
-            {player.was_subbed_in && (
-              <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 text-emerald-500 border-emerald-500/30">
-                Sub
-              </Badge>
-            )}
-            {!player.counted && (
-              <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 text-muted-foreground border-border/50">
-                {player.slot_type === "starting" ? "Subbed out" : "Unused"}
-              </Badge>
-            )}
-          </div>
-          {activeStats.length > 0 ? (
-            <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-              {activeStats.map(({ key, label }) => `${label}${breakdown![key] > 1 ? ` ×${breakdown![key]}` : ""}`).join(" · ")}
-            </p>
-          ) : breakdown ? (
-            <p className="text-[11px] text-muted-foreground/70 mt-0.5 italic">
-              {breakdown.minutes > 0 ? `${breakdown.minutes} mins` : "Did not play"}
-            </p>
-          ) : (
-            <p className="text-[11px] text-muted-foreground/50 mt-0.5 italic">No detailed breakdown available</p>
+        <div className="min-w-0 flex items-center gap-1.5">
+          <p className="text-sm font-medium truncate">{player.web_name}</p>
+          {player.is_captain && (
+            <Badge variant="secondary" className="text-[10px] h-4 px-1 py-0 uppercase bg-amber-500/20 text-amber-600 border-0">
+              C ×2
+            </Badge>
+          )}
+          {player.was_subbed_in && (
+            <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 text-emerald-500 border-emerald-500/30">
+              Sub
+            </Badge>
+          )}
+          {!player.counted && (
+            <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 text-muted-foreground border-border/50">
+              {player.slot_type === "starting" ? "Subbed out" : "Unused"}
+            </Badge>
           )}
         </div>
       </div>
-      <span className={cn("text-sm font-mono font-semibold shrink-0 ml-2", !player.counted && "font-normal")}>{player.points}</span>
+      {breakdown ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{pointsEl}</TooltipTrigger>
+          <TooltipContent side="left" className="text-xs">
+            {activeStats.length > 0
+              ? activeStats.map(({ key, label }) => `${label}${breakdown[key] > 1 ? ` ×${breakdown[key]}` : ""}`).join(" · ")
+              : breakdown.minutes > 0 ? `${breakdown.minutes} mins` : "Did not play"}
+          </TooltipContent>
+        </Tooltip>
+      ) : pointsEl}
     </div>
   )
 }
