@@ -125,14 +125,17 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
         entry.bench_order = targetSlot === "bench" ? (newBenchOrder ?? null) : null
       }
 
-      // Hard guard: a real swap (displacedId set) always balances itself; a
-      // move into an empty slot only makes sense when that slot was
-      // actually empty. Either way the totals must never cross their caps —
-      // if they would, refuse locally instead of showing a phantom 12th
-      // starting player and sending a request the server can only reject.
+      // Hard guard: Starting XI must never exceed its cap (the server's
+      // validateFormationCaps rejects this too) — refuse locally instead of
+      // showing a phantom 12th starting player and sending a request the
+      // server can only reject. No bench-count check here: the server
+      // doesn't enforce one either (an over-cap bench is an allowed
+      // transient state, e.g. mid-way through manually clearing out a
+      // roster corrupted by an earlier bug) — a client-only bench cap would
+      // just block moves the server actually accepts, leaving the UI stuck
+      // showing the pre-swap state until a refresh re-fetches the truth.
       const startingCount = next.filter(e => e.slot_type === "starting").length
-      const benchCount = next.filter(e => e.slot_type === "bench").length
-      if (startingCount > SQUAD_RULES.starting || benchCount > SQUAD_RULES.bench) {
+      if (startingCount > SQUAD_RULES.starting) {
         invalid = true
         return prev
       }
