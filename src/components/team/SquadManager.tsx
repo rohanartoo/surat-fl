@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react"
+import { useState, useCallback, useMemo, useRef, useEffect, type ReactNode } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -33,6 +33,9 @@ interface Props {
   canEdit: boolean
   quotaSummary?: DropQuotaSummary
   dropsLocked?: boolean
+  /** Rendered as the third grid column, alongside Starting XI/Bench and Dropped — lets the
+   * page place Gameweek Performance so it starts at the same vertical height as Starting XI. */
+  children?: ReactNode
 }
 
 type Entry = RosterEntry & { player: Player }
@@ -51,7 +54,7 @@ async function post(action: string, body: object) {
   return data
 }
 
-export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary: initialQuotaSummary, dropsLocked }: Props) {
+export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary: initialQuotaSummary, dropsLocked, children }: Props) {
   const [roster, setRoster] = useState<Entry[]>(initialRoster)
   const [quotaSummary, setQuotaSummary] = useState(initialQuotaSummary)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -348,104 +351,114 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
         <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{error}</p>
       )}
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        {/* Starting XI */}
-        <Card className="border-border/60">
-          <CardHeader className="pb-2 flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Starting XI</CardTitle>
-            <Badge variant="secondary" className="font-mono text-xs">{startingXI.length} / {SQUAD_RULES.starting}</Badge>
-          </CardHeader>
-          <CardContent className="space-y-0.5 px-3 pb-3">
-            <SortableContext items={startingXI.map(e => e.id)} strategy={verticalListSortingStrategy}>
-              {startingXI.map(entry => (
-                <PlayerCard
-                  key={entry.id}
-                  entry={entry}
-                  canEdit={effectiveCanEdit}
-                  onSetCaptain={handleSetCaptain}
-                  onSetVC={handleSetVC}
-                  onMarkDrop={handleMarkDrop}
-                  isSelected={entry.id === selectedId}
-                  isEligible={eligiblePartnerIds.has(entry.id)}
-                  dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
-                  onSelect={() => handleSelect(entry.id)}
+      {/* Three columns, all starting at the same top edge: squad (Starting
+          XI + Bench), staged/dropped players, and whatever's passed as
+          children (the Gameweek Performance card). Collapses to fewer
+          columns on narrower screens instead of overflowing. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(320px,1.4fr)_minmax(260px,1fr)_360px] gap-6 items-start">
+        <div className="space-y-6 md:col-span-2 xl:col-span-1">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            {/* Starting XI */}
+            <Card className="border-border/60">
+              <CardHeader className="pb-2 flex flex-row items-center justify-between">
+                <CardTitle className="text-base">Starting XI</CardTitle>
+                <Badge variant="secondary" className="font-mono text-xs">{startingXI.length} / {SQUAD_RULES.starting}</Badge>
+              </CardHeader>
+              <CardContent className="space-y-0.5 px-3 pb-3">
+                <SortableContext items={startingXI.map(e => e.id)} strategy={verticalListSortingStrategy}>
+                  {startingXI.map(entry => (
+                    <PlayerCard
+                      key={entry.id}
+                      entry={entry}
+                      canEdit={effectiveCanEdit}
+                      onSetCaptain={handleSetCaptain}
+                      onSetVC={handleSetVC}
+                      onMarkDrop={handleMarkDrop}
+                      isSelected={entry.id === selectedId}
+                      isEligible={eligiblePartnerIds.has(entry.id)}
+                      dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
+                      onSelect={() => handleSelect(entry.id)}
+                    />
+                  ))}
+                </SortableContext>
+                {Array.from({ length: Math.max(0, SQUAD_RULES.starting - startingXI.length) }).map((_, i) => (
+                  <EmptySlot
+                    key={`empty-start-${i}`}
+                    id={`empty-start-${i}`}
+                    label="Empty starting slot"
+                    isEligible={emptyStartEligible}
+                    dimmed={!!selectedId && !emptyStartEligible}
+                    onSelect={() => handleSelectEmpty("starting")}
+                  />
+                ))}
+              </CardContent>
+            </Card>
+
+            {/* Bench */}
+            <Card className="border-border/60">
+              <CardHeader className="pb-2 flex flex-row items-center justify-between">
+                <CardTitle className="text-base">Bench</CardTitle>
+                <Badge variant="secondary" className="font-mono text-xs">{bench.length} / {SQUAD_RULES.bench}</Badge>
+              </CardHeader>
+              <CardContent className="space-y-0.5 px-3 pb-3">
+                <SortableContext items={bench.map(e => e.id)} strategy={verticalListSortingStrategy}>
+                  {bench.map((entry, i) => (
+                    <PlayerCard
+                      key={entry.id}
+                      entry={entry}
+                      benchNumber={entry.bench_order ?? i + 1}
+                      canEdit={effectiveCanEdit}
+                      onSetCaptain={handleSetCaptain}
+                      onSetVC={handleSetVC}
+                      onMarkDrop={handleMarkDrop}
+                      isSelected={entry.id === selectedId}
+                      isEligible={eligiblePartnerIds.has(entry.id)}
+                      dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
+                      onSelect={() => handleSelect(entry.id)}
+                    />
+                  ))}
+                </SortableContext>
+                {Array.from({ length: emptyBenchSlots }).map((_, i) => (
+                  <EmptySlot
+                    key={`empty-bench-${i}`}
+                    id={`empty-bench-${bench.length + i + 1}`}
+                    label="Empty bench slot"
+                    index={bench.length + i + 1}
+                    isEligible={emptyBenchEligible}
+                    dimmed={!!selectedId && !emptyBenchEligible}
+                    onSelect={() => handleSelectEmpty("bench", bench.length + i + 1)}
+                  />
+                ))}
+              </CardContent>
+            </Card>
+
+            <DragOverlay>
+              {activeEntry && (
+                <PlayerCardOverlay
+                  entry={activeEntry}
+                  benchNumber={activeEntry.slot_type === "bench" ? (activeEntry.bench_order ?? undefined) : undefined}
                 />
-              ))}
-            </SortableContext>
-            {Array.from({ length: Math.max(0, SQUAD_RULES.starting - startingXI.length) }).map((_, i) => (
-              <EmptySlot
-                key={`empty-start-${i}`}
-                id={`empty-start-${i}`}
-                label="Empty starting slot"
-                isEligible={emptyStartEligible}
-                dimmed={!!selectedId && !emptyStartEligible}
-                onSelect={() => handleSelectEmpty("starting")}
-              />
-            ))}
-          </CardContent>
-        </Card>
+              )}
+            </DragOverlay>
+          </DndContext>
+        </div>
 
-        {/* Bench */}
-        <Card className="border-border/60">
-          <CardHeader className="pb-2 flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Bench</CardTitle>
-            <Badge variant="secondary" className="font-mono text-xs">{bench.length} / {SQUAD_RULES.bench}</Badge>
-          </CardHeader>
-          <CardContent className="space-y-0.5 px-3 pb-3">
-            <SortableContext items={bench.map(e => e.id)} strategy={verticalListSortingStrategy}>
-              {bench.map((entry, i) => (
-                <PlayerCard
-                  key={entry.id}
-                  entry={entry}
-                  benchNumber={entry.bench_order ?? i + 1}
-                  canEdit={effectiveCanEdit}
-                  onSetCaptain={handleSetCaptain}
-                  onSetVC={handleSetVC}
-                  onMarkDrop={handleMarkDrop}
-                  isSelected={entry.id === selectedId}
-                  isEligible={eligiblePartnerIds.has(entry.id)}
-                  dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
-                  onSelect={() => handleSelect(entry.id)}
-                />
-              ))}
-            </SortableContext>
-            {Array.from({ length: emptyBenchSlots }).map((_, i) => (
-              <EmptySlot
-                key={`empty-bench-${i}`}
-                id={`empty-bench-${bench.length + i + 1}`}
-                label="Empty bench slot"
-                index={bench.length + i + 1}
-                isEligible={emptyBenchEligible}
-                dimmed={!!selectedId && !emptyBenchEligible}
-                onSelect={() => handleSelectEmpty("bench", bench.length + i + 1)}
-              />
-            ))}
-          </CardContent>
-        </Card>
+        {/* Staged / dropped players */}
+        <DroppedSection
+          entries={dropped}
+          canEdit={canEdit}
+          onReturnFromDrop={handleReturnFromDrop}
+          quotaSummary={quotaSummary}
+          dropsLocked={dropsLocked}
+        />
 
-        <DragOverlay>
-          {activeEntry && (
-            <PlayerCardOverlay
-              entry={activeEntry}
-              benchNumber={activeEntry.slot_type === "bench" ? (activeEntry.bench_order ?? undefined) : undefined}
-            />
-          )}
-        </DragOverlay>
-      </DndContext>
-
-      {/* Staged drops */}
-      <DroppedSection
-        entries={dropped}
-        canEdit={canEdit}
-        onReturnFromDrop={handleReturnFromDrop}
-        quotaSummary={quotaSummary}
-        dropsLocked={dropsLocked}
-      />
+        {children}
+      </div>
     </div>
   )
 }

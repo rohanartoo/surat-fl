@@ -1,5 +1,7 @@
 "use client"
 
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PositionBadge } from "@/components/ui/PositionBadge"
 import { formatMoney } from "@/lib/utils"
@@ -17,41 +19,41 @@ export function DroppedSection({ entries, canEdit, onReturnFromDrop, quotaSummar
   if (entries.length === 0 && !quotaSummary) return null
 
   return (
-    <div className="pt-2">
-      <div className="flex items-center justify-between mb-2 px-1">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          {dropsLocked ? "Dropped players" : "Staged drops"}
-        </h3>
+    <Card className="border-border/60">
+      <CardHeader className="pb-2 flex flex-row items-center justify-between">
+        <CardTitle className="text-base">{dropsLocked ? "Dropped players" : "Staged drops"}</CardTitle>
         {quotaSummary && (
-          <span className={`text-xs font-mono font-medium ${quotaSummary.excess > 0 ? "text-destructive" : "text-muted-foreground"}`}>
+          <Badge
+            variant="secondary"
+            className={`font-mono text-xs ${quotaSummary.excess > 0 ? "text-destructive" : ""}`}
+          >
             {quotaSummary.used}/{quotaSummary.total_free} free
-          </span>
+          </Badge>
         )}
-      </div>
+      </CardHeader>
+      <CardContent className="space-y-0.5 px-3 pb-3">
+        {quotaSummary && quotaSummary.excess > 0 && (
+          <p className="text-xs text-destructive bg-destructive/10 px-2 py-1.5 rounded-md mb-2">
+            ⚠ {quotaSummary.excess} excess drop{quotaSummary.excess > 1 ? "s" : ""}: {quotaSummary.penalty_points} pts penalty (applied end of gameweek)
+          </p>
+        )}
 
-      {quotaSummary && quotaSummary.excess > 0 && (
-        <p className="text-xs text-destructive bg-destructive/10 px-2 py-1.5 rounded-md mb-2">
-          ⚠ {quotaSummary.excess} excess drop{quotaSummary.excess > 1 ? "s" : ""}: {quotaSummary.penalty_points} pts penalty (applied end of gameweek)
-        </p>
-      )}
-
-      {entries.length > 0 && (
-        <div className="space-y-0.5">
-          {entries.map(entry => (
+        {entries.length > 0 ? (
+          entries.map(entry => (
             <div
               key={entry.id}
               className="flex items-center justify-between py-2.5 px-2 rounded-md opacity-60 hover:opacity-100 transition-opacity group"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <PositionBadge position={entry.player.position} />
-                <div>
-                  <p className="text-sm font-medium leading-none line-through text-muted-foreground">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium leading-none line-through text-muted-foreground truncate">
                     {entry.player.web_name}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">{entry.player.fpl_team_short}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 <span className="text-sm font-mono text-muted-foreground">{formatMoney(entry.base_price)}</span>
                 {canEdit && (
                   dropsLocked
@@ -67,9 +69,11 @@ export function DroppedSection({ entries, canEdit, onReturnFromDrop, quotaSummar
                 )}
               </div>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+          ))
+        ) : (
+          <p className="text-sm text-muted-foreground italic py-4 text-center">No staged drops.</p>
+        )}
+      </CardContent>
+    </Card>
   )
 }
