@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
 
   const { data: rosterRows, error: rosterErr } = await supabase
     .from("roster_entries")
-    .select("team_id, player_id, slot_type")
+    .select("team_id, player_id, slot_type, is_captain")
     .in("slot_type", ["starting", "bench"])
 
   if (rosterErr) return NextResponse.json({ error: rosterErr.message }, { status: 500 })
@@ -68,15 +68,19 @@ export async function POST(request: NextRequest) {
       .not("player_id", "is", null)
     if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 })
 
-    const rows = rosterRows.map(r => ({
-      team_id: r.team_id,
-      player_id: r.player_id,
-      gameweek,
-      points: simulatePoints(),
-      was_subbed_in: false,
-      slot_type: r.slot_type,
-      counted: r.slot_type === "starting",
-    }))
+    const rows = rosterRows.map(r => {
+      const basePoints = simulatePoints()
+      return {
+        team_id: r.team_id,
+        player_id: r.player_id,
+        gameweek,
+        points: r.is_captain ? basePoints * 2 : basePoints,
+        was_subbed_in: false,
+        slot_type: r.slot_type,
+        counted: r.slot_type === "starting",
+        is_captain: r.is_captain,
+      }
+    })
 
     const { error: insertErr } = await supabase.from("gameweek_points").insert(rows)
     if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
