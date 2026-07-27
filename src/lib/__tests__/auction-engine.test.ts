@@ -8,6 +8,7 @@ import {
   getNextBidStartIndex,
   chooseSlotType,
   validateFormation,
+  validateFormationCaps,
 } from "@/lib/auction-engine"
 import type { Position } from "@/types"
 
@@ -308,5 +309,46 @@ describe("validateFormation", () => {
       ...Array(3).fill(makePos("FWD")),
     ]
     expect(validateFormation(xi)).toMatch(/GK/)
+  })
+})
+
+// ─── validateFormationCaps ──────────────────────────────────────────────────
+
+describe("validateFormationCaps", () => {
+  it("accepts an incomplete Starting XI (below 11)", () => {
+    const xi = [
+      makePos("GK"),
+      ...Array(3).fill(makePos("DEF")),
+      ...Array(3).fill(makePos("MID")),
+    ]
+    expect(validateFormationCaps(xi)).toBeNull()
+  })
+  it("accepts an under-minimum Starting XI (0 FWD) as long as no cap is exceeded", () => {
+    const xi = [
+      makePos("GK"),
+      ...Array(5).fill(makePos("DEF")),
+      ...Array(5).fill(makePos("MID")),
+    ]
+    expect(validateFormationCaps(xi)).toBeNull()
+  })
+  it("rejects more than 11 players", () => {
+    const xi = Array(12).fill(makePos("MID"))
+    expect(validateFormationCaps(xi)).not.toBeNull()
+  })
+  it("rejects a 2nd GK", () => {
+    const xi = [
+      makePos("GK"),
+      makePos("GK"),
+      ...Array(3).fill(makePos("DEF")),
+      ...Array(3).fill(makePos("MID")),
+    ]
+    expect(validateFormationCaps(xi)).toMatch(/GK/)
+  })
+  it("rejects exceeding max DEF", () => {
+    const xi = [
+      makePos("GK"),
+      ...Array(6).fill(makePos("DEF")),
+    ]
+    expect(validateFormationCaps(xi)).toMatch(/DEF/)
   })
 })

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, assertOwnership } from "@/lib/roles"
-import { validateFormation } from "@/lib/auction-engine"
+import { validateFormationCaps, chooseSlotType } from "@/lib/auction-engine"
 import { getCurrentAuction } from "@/lib/auctions"
 import { getDropQuota } from "@/lib/drops"
 import { calcDropPrice } from "@/lib/utils"
@@ -87,12 +87,15 @@ async function handleSwap(request: NextRequest) {
     if (displaced_entry_id) startingIds.add(displaced_entry_id)
   }
 
-  // Only enforce formation when squad is complete
-  if (rows.length === SQUAD_RULES.total) {
-    const simStarting = [...startingIds].map(id => ({ position: posById[id] })).filter(p => p.position)
-    const formationError = validateFormation(simStarting)
-    if (formationError) return err(formationError)
-  }
+  // Only hard caps are enforced here (never exceed 11, never exceed a
+  // position's max) — an incomplete or under-minimum Starting XI is an
+  // allowed transient state (e.g. rebuilding one swap at a time after
+  // returning several staged drops). Minimums are enforced softly
+  // elsewhere: the "Illegal Starting XI" banner, and repairIllegalFormation
+  // at scoring time.
+  const simStarting = [...startingIds].map(id => ({ position: posById[id] })).filter(p => p.position)
+  const formationError = validateFormationCaps(simStarting)
+  if (formationError) return err(formationError)
 
   // Apply writes atomically — rpc_swap_roster_entry locks both rows and does
   // the slot_type/bench_order updates in one transaction, so a partial
@@ -223,7 +226,7 @@ async function handleReturnFromDrop(request: NextRequest) {
   if (!entry_id) return err("entry_id required.")
 
   const { data: entry } = await supabase
-    .from("roster_entries").select("team_id, player_id, slot_type").eq("id", entry_id).single()
+    .from("roster_entries").select("team_id, player_id, slot_type, player:players(position)").eq("id", entry_id).single()
   if (!entry) return err("Roster entry not found.", 404)
   if (entry.slot_type !== "dropped") return err("Player is not staged for drop.")
 
@@ -248,20 +251,47 @@ async function handleReturnFromDrop(request: NextRequest) {
 
   if (!drop) return err("No staged drop found for this player.")
 
-  // Find next available bench slot (1–4)
-  const { data: benchEntries } = await supabase
+  // Decide starting vs bench the same way a freshly-drafted player would
+  // (chooseSlotType) — fills an open Starting XI slot when there's genuinely
+  // room for this position without locking out a later position's minimum,
+  // falling back to bench otherwise. Without this, returning several staged
+  // drops at once always piled everyone onto the bench even when the
+  // Starting XI had open slots, leaving it stuck below 11 with no player left
+  // on the bench to fill it.
+  const { data: activeEntries } = await supabase
     .from("roster_entries")
-    .select("bench_order")
+    .select("slot_type, bench_order, player:players(position)")
     .eq("team_id", entry.team_id)
-    .eq("slot_type", "bench")
+    .in("slot_type", ["starting", "bench"])
 
-  const usedOrders = new Set((benchEntries ?? []).map(e => e.bench_order))
-  const nextOrder = [1, 2, 3, 4].find(n => !usedOrders.has(n)) ?? null
+  const activeRoster = (activeEntries ?? []).map(r => ({
+    slot_type: r.slot_type as string,
+    position: (r.player as unknown as { position: Position }).position,
+  }))
+  const returningPosition = (entry.player as unknown as { position: Position }).position
 
-  // Restore to bench
+  let targetSlot = chooseSlotType(returningPosition, activeRoster)
+  let benchOrder: number | null = null
+
+  if (targetSlot === "bench") {
+    const usedOrders = new Set(
+      (activeEntries ?? []).filter(r => r.slot_type === "bench").map(r => r.bench_order)
+    )
+    const nextOrder = [1, 2, 3, 4].find(n => !usedOrders.has(n)) ?? null
+    // Bench is genuinely full but Starting XI has room (can happen from
+    // pre-existing corrupted state) — prefer starting over overflowing the
+    // bench again.
+    const startingCount = activeRoster.filter(r => r.slot_type === "starting").length
+    if (nextOrder === null && startingCount < SQUAD_RULES.starting) {
+      targetSlot = "starting"
+    } else {
+      benchOrder = nextOrder
+    }
+  }
+
   await supabase.from("roster_entries").update({
-    slot_type: "bench",
-    bench_order: nextOrder,
+    slot_type: targetSlot,
+    bench_order: targetSlot === "bench" ? benchOrder : null,
   }).eq("id", entry_id)
 
   // Delete the staged drop

@@ -257,3 +257,25 @@ export function validateFormation(starting: { position: Position }[]): string | 
   }
   return null
 }
+
+/**
+ * Hard-cap-only version for swap-time validation: never block an incomplete
+ * or under-minimum Starting XI (that's an allowed transient state — e.g.
+ * rebuilding after returning several staged drops one swap at a time — and
+ * is already handled softly elsewhere via the "Illegal Starting XI" banner
+ * and repairIllegalFormation at scoring time). Only exceeding a hard cap
+ * (more than 11 total, or more than a position's max) is ever rejected.
+ */
+export function validateFormationCaps(starting: { position: Position }[]): string | null {
+  if (starting.length > SQUAD_RULES.starting) {
+    return `Starting XI can have at most ${SQUAD_RULES.starting} players`
+  }
+  for (const pos of POSITION_ORDER) {
+    const count = starting.filter(p => p.position === pos).length
+    const max = SQUAD_RULES.max_starting[pos]
+    if (count > max) {
+      return `Starting XI can have at most ${max} ${pos}${max > 1 ? "s" : ""}`
+    }
+  }
+  return null
+}
