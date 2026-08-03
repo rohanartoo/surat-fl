@@ -18,9 +18,40 @@ function err(message: string, status = 400) {
 }
 
 type RosterRow = { slot_type: string; bench_order: number | null; player: { position: Position } | { position: Position }[] }
+type PlayerJoin = { position: Position; fpl_team: string }
+
+function playerOf<T extends { player: PlayerJoin | PlayerJoin[] }>(row: T): PlayerJoin {
+  return Array.isArray(row.player) ? row.player[0] : row.player
+}
 
 function positionOf(row: { player: { position: Position } | { position: Position }[] }): Position {
   return (Array.isArray(row.player) ? row.player[0] : row.player).position
+}
+
+/** Max-3-per-club cap (SQUAD_RULES.max_per_club), enforced here explicitly:
+ * the DB trigger that normally guards this (check_club_cap) only fires on
+ * INSERT, and a trade moves a player via UPDATE team_id, so it would
+ * otherwise slip through silently. Counts the receiving team's active
+ * roster for the incoming player's club, excluding the entry leaving that
+ * team as part of this same trade. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function checkClubCap(supabase: any, teamId: string, teamName: string, outgoingEntryId: string, club: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("roster_entries")
+    .select("id, player:players(fpl_team)")
+    .eq("team_id", teamId)
+    .in("slot_type", ["starting", "bench"])
+
+  const rows = (data ?? []) as { id: string; player: { fpl_team: string } | { fpl_team: string }[] }[]
+  const count = rows
+    .filter(r => r.id !== outgoingEntryId)
+    .filter(r => (Array.isArray(r.player) ? r.player[0] : r.player).fpl_team === club)
+    .length
+
+  if (count >= SQUAD_RULES.max_per_club) {
+    return `Team ${teamName} already has ${SQUAD_RULES.max_per_club} players from EPL team ${club}.`
+  }
+  return null
 }
 
 /** Computes slot_type/bench_order for a player joining a team, reusing the
@@ -78,7 +109,7 @@ export async function POST(request: NextRequest) {
 
     const { data: entryA } = await supabase
       .from("roster_entries")
-      .select("id, team_id, slot_type, player:players(position)")
+      .select("id, team_id, slot_type, player:players(position, fpl_team)")
       .eq("id", entry_a_id).single()
     if (!entryA) return err("Player A roster entry not found.", 404)
     if (entryA.team_id !== team_a_id) return err("Player A does not belong to team_a_id.")
@@ -86,7 +117,7 @@ export async function POST(request: NextRequest) {
 
     const { data: entryB } = await supabase
       .from("roster_entries")
-      .select("id, team_id, slot_type, player:players(position)")
+      .select("id, team_id, slot_type, player:players(position, fpl_team)")
       .eq("id", entry_b_id).single()
     if (!entryB) return err("Player B roster entry not found.", 404)
     if (entryB.team_id !== team_b_id) return err("Player B does not belong to team_b_id.")
@@ -96,9 +127,20 @@ export async function POST(request: NextRequest) {
     const positionB = positionOf(entryB)
     if (positionA !== positionB) return err(`Players must be the same position (${positionA} vs ${positionB}).`)
 
+    const { data: tradingTeams } = await supabase.from("teams").select("id, display_name, budget").in("id", [team_a_id, team_b_id])
+    const teamA = (tradingTeams ?? []).find((t: { id: string }) => t.id === team_a_id)
+    const teamB = (tradingTeams ?? []).find((t: { id: string }) => t.id === team_b_id)
+    if (!teamA || !teamB) return err("One of the trading teams was not found.", 404)
+
+    const clubA = playerOf(entryA).fpl_team
+    const clubB = playerOf(entryB).fpl_team
+    const capErrorB = await checkClubCap(supabase, team_b_id, teamB.display_name, entry_b_id, clubA)
+    if (capErrorB) return err(capErrorB)
+    const capErrorA = await checkClubCap(supabase, team_a_id, teamA.display_name, entry_a_id, clubB)
+    if (capErrorA) return err(capErrorA)
+
     if (cashAmount > 0) {
-      const { data: payingTeam } = await supabase.from("teams").select("budget").eq("id", cash_team_id).single()
-      if (!payingTeam) return err("Paying team not found.", 404)
+      const payingTeam = cash_team_id === team_a_id ? teamA : teamB
       if (cashAmount > payingTeam.budget) return err(`Cash amount exceeds the paying team's budget of £${payingTeam.budget}m.`)
     }
 
