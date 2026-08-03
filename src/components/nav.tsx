@@ -7,7 +7,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Gavel, Users, User, Trophy, Settings, LogOut } from "lucide-react"
+import { LayoutDashboard, Gavel, Users, User, Trophy, Settings, LogOut, ArrowLeftRight } from "lucide-react"
 import type { Role } from "@/types"
 
 const navItems: { href: string; label: string; icon: typeof LayoutDashboard; roles?: Role[] }[] = [
@@ -16,6 +16,7 @@ const navItems: { href: string; label: string; icon: typeof LayoutDashboard; rol
   { href: "/my-team", label: "My Team", icon: User, roles: ["team"] },
   { href: "/teams", label: "Teams", icon: Users },
   { href: "/standings", label: "Standings", icon: Trophy },
+  { href: "/loan-transfers", label: "Loan Transfers", icon: ArrowLeftRight, roles: ["admin", "auction_master"] },
   { href: "/settings",  label: "Settings",  icon: Settings },
 ]
 

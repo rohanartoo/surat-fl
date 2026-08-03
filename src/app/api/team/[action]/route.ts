@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, assertOwnership } from "@/lib/roles"
-import { validateFormationCaps, chooseSlotType, repairCaptaincy } from "@/lib/auction-engine"
+import { validateFormationCaps, chooseSlotType } from "@/lib/auction-engine"
 import { getCurrentAuction } from "@/lib/auctions"
 import { getDropQuota } from "@/lib/drops"
+import { repairTeamCaptaincy } from "@/lib/roster"
 import { calcDropPrice } from "@/lib/utils"
 import { SQUAD_RULES } from "@/types"
 import type { Position, AuctionType } from "@/types"
@@ -19,27 +20,6 @@ type Params = { params: Promise<{ action: string }> }
 
 function err(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status })
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function repairTeamCaptaincy(supabase: any, teamId: string): Promise<{ captain_id: string | null; vice_captain_id: string | null }> {
-  const { data: starters } = await supabase
-    .from("roster_entries")
-    .select("id, base_price, is_captain, is_vice_captain")
-    .eq("team_id", teamId)
-    .eq("slot_type", "starting")
-
-  const starting = (starters ?? []) as { id: string; base_price: number; is_captain: boolean; is_vice_captain: boolean }[]
-  const { captainId, viceCaptainId, changed } = repairCaptaincy(starting)
-
-  if (changed) {
-    await supabase.from("roster_entries").update({ is_captain: false }).eq("team_id", teamId)
-    await supabase.from("roster_entries").update({ is_vice_captain: false }).eq("team_id", teamId)
-    if (captainId) await supabase.from("roster_entries").update({ is_captain: true }).eq("id", captainId)
-    if (viceCaptainId) await supabase.from("roster_entries").update({ is_vice_captain: true }).eq("id", viceCaptainId)
-  }
-
-  return { captain_id: captainId, vice_captain_id: viceCaptainId }
 }
 
 export async function POST(request: NextRequest, { params }: Params) {
