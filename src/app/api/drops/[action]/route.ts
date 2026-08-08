@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
-import { getDropQuota } from "@/lib/drops"
+import { getDropQuota, getCarryoverForTeam } from "@/lib/drops"
 import type { AuctionType } from "@/types"
 
 function createClient() {
@@ -115,9 +115,10 @@ async function handleQuota(request: NextRequest) {
   if (!targetTeamId) return err("Not a team account.", 403)
 
   const { data: auction } = await supabase
-    .from("auctions").select("type").eq("id", auction_id).single()
+    .from("auctions").select("type, created_at").eq("id", auction_id).single()
   if (!auction) return err("Auction not found.", 404)
 
-  const quota = await getDropQuota(targetTeamId, auction_id, auction.type as AuctionType, supabase)
+  const carryover = await getCarryoverForTeam(targetTeamId, auction.created_at, supabase)
+  const quota = await getDropQuota(targetTeamId, auction_id, auction.type as AuctionType, supabase, carryover)
   return NextResponse.json(quota)
 }

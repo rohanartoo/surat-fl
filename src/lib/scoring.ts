@@ -321,7 +321,7 @@ export async function applyDropPenalties(
   const { data: records, error } = await supabase
     .from("team_transfer_records")
     .select("team_id, points_penalty, auction:auctions(gameweek)")
-    .gt("points_penalty", 0) // only rows with an actual penalty
+    .lt("points_penalty", 0) // points_penalty is stored negative (excess_drops * DROP_RULES.penalty_per_extra_drop, e.g. -4) — only rows with an actual penalty
 
   if (error) throw new Error(`applyDropPenalties fetch: ${error.message}`)
 

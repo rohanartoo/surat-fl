@@ -12,6 +12,42 @@ export function freeDropsForType(type: AuctionType): number {
 }
 
 /**
+ * Looks up how many free transfers a team carries into the given auction,
+ * from the most recently completed auction before it. Auctions are strictly
+ * serial (only one pending/active at a time — see handleCreate), so "the
+ * most recently completed auction before this one's created_at" is an
+ * unambiguous "prior auction" to pull team_transfer_records from. Returns 0
+ * if there's no prior auction, or the team has no record for it (e.g. it
+ * didn't participate).
+ */
+export async function getCarryoverForTeam(
+  teamId: string,
+  auctionCreatedAt: string,
+  supabase: SupabaseClient,
+): Promise<number> {
+  const { data: priorAuctions } = await supabase
+    .from("auctions")
+    .select("id")
+    .eq("status", "completed")
+    .lt("created_at", auctionCreatedAt)
+    .order("created_at", { ascending: false })
+    .limit(1)
+  const priorAuctionId = priorAuctions?.[0]?.id ?? null
+  if (!priorAuctionId) return 0
+
+  const { data: priorRecord } = await supabase
+    .from("team_transfer_records")
+    .select("free_transfers_base, free_transfers_carryover, transfers_used")
+    .eq("auction_id", priorAuctionId)
+    .eq("team_id", teamId)
+    .maybeSingle()
+  if (!priorRecord) return 0
+
+  const leftover = priorRecord.free_transfers_base + priorRecord.free_transfers_carryover - priorRecord.transfers_used
+  return Math.min(Math.max(0, leftover), DROP_RULES.max_carry_over)
+}
+
+/**
  * Computes a team's drop quota summary for the given auction.
  * carryover defaults to 0; pass from team_transfer_records when available.
  */

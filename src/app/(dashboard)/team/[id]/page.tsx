@@ -4,7 +4,7 @@ import { notFound } from "next/navigation"
 import { SquadManager } from "@/components/team/SquadManager"
 import { AdminTeamControls } from "@/components/settings/AdminTeamControls"
 import { GameweekPerformance } from "@/components/team/GameweekPerformance"
-import { getDropQuota } from "@/lib/drops"
+import { getDropQuota, getCarryoverForTeam } from "@/lib/drops"
 import { getTeamGameweekPerformance, getLastSyncedGameweek } from "@/lib/scoring"
 import { fetchCurrentGameweek } from "@/lib/fpl"
 import type { LeagueTeam, Player, RosterEntry, DropQuotaSummary, AuctionType } from "@/types"
@@ -19,7 +19,7 @@ async function getTeamData(id: string) {
   const [{ data: team }, { data: roster }, { data: auction }, { data: teamProfile }] = await Promise.all([
     supabase.from("teams").select("*").eq("id", id).single(),
     supabase.from("roster_entries").select("*, player:players(*)").eq("team_id", id).order("base_price", { ascending: false }),
-    supabase.from("auctions").select("id, type, status").in("status", ["pending", "active"]).maybeSingle(),
+    supabase.from("auctions").select("id, type, status, created_at").in("status", ["pending", "active"]).maybeSingle(),
     // Fetch the profile linked to this team (for admin controls)
     supabase.from("profiles").select("id, username").eq("team_id", id).maybeSingle(),
   ])
@@ -47,7 +47,8 @@ export default async function TeamPage({ params }: PageProps) {
   let quotaSummary: DropQuotaSummary | undefined
   if (auction && (profile?.team_id === team.id || isAdmin)) {
     const supabase = await createClient()
-    quotaSummary = await getDropQuota(team.id, auction.id, auction.type as AuctionType, supabase)
+    const carryover = await getCarryoverForTeam(team.id, auction.created_at, supabase)
+    quotaSummary = await getDropQuota(team.id, auction.id, auction.type as AuctionType, supabase, carryover)
   }
 
   const dropsLocked = auction?.status === "active"

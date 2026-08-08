@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
 import { getNextBidder, isSoloWin, POSITION_ORDER } from "@/lib/auction-engine"
-import { lockAndCommitDrops, checkReDraftEligibility } from "@/lib/drops"
+import { lockAndCommitDrops, checkReDraftEligibility, freeDropsForType, getCarryoverForTeam } from "@/lib/drops"
 import { getCurrentAuction } from "@/lib/auctions"
-import type { Position } from "@/types"
-import { SQUAD_RULES, AUCTION_TIMER_SECONDS } from "@/types"
+import type { Position, AuctionType } from "@/types"
+import { SQUAD_RULES, AUCTION_TIMER_SECONDS, DROP_RULES } from "@/types"
 
 // All mutations use the service role client to bypass RLS.
 // Auth is still enforced via requireRole/getProfile before every write.
@@ -55,14 +55,25 @@ export async function POST(request: NextRequest, { params }: Params) {
 
 // ─────────────────────────────────────────────
 // CREATE
-// Body: { type: "initial" | "mini" | "post_jan" | "post_summer" }
+// Body: { type: "initial" | "mini" | "post_jan" | "post_summer", gameweek?: number }
+// gameweek is required for every type except "initial" (no drops are possible
+// in the first auction, so there's no penalty to attribute to a GW) — it's
+// what applyDropPenalties (src/lib/scoring.ts) later matches against when a
+// gameweek is synced/simulated, so the target GW must be locked in up front.
 // ─────────────────────────────────────────────
 async function handleCreate(request: NextRequest) {
   await requireRole("auction_master")
   const supabase = createClient()
-  const { type = "initial" } = await request.json()
+  const { type = "initial", gameweek } = await request.json()
 
   if (!["initial", "mini", "post_jan", "post_summer"].includes(type)) return err("Invalid auction type.")
+
+  const requiresGameweek = type !== "initial"
+  if (requiresGameweek) {
+    if (typeof gameweek !== "number" || !Number.isInteger(gameweek) || gameweek < 1 || gameweek > 38) {
+      return err("A valid gameweek (1–38) is required for this auction type.")
+    }
+  }
 
   const existing = await getCurrentAuction(supabase)
   if (existing) return err("An auction is already open.")
@@ -80,6 +91,7 @@ async function handleCreate(request: NextRequest) {
     .insert({
       type,
       status: "pending",
+      gameweek: requiresGameweek ? gameweek : null,
       current_position_category: "GK",
       free_transfers: freeTransfers,
       auction_order: auctionOrder,
@@ -837,7 +849,7 @@ async function handleEndDraft(request: NextRequest) {
   if (!auction_id) return err("auction_id required.")
 
   const { data: auction } = await supabase
-    .from("auctions").select("status, auction_order").eq("id", auction_id).single()
+    .from("auctions").select("status, type, gameweek, auction_order, created_at").eq("id", auction_id).single()
   if (!auction) return err("Auction not found.", 404)
   if (auction.status !== "active") return err("Auction is not active.")
 
@@ -866,6 +878,48 @@ async function handleEndDraft(request: NextRequest) {
   const incomplete = (teams ?? []).filter(t => (countByTeam[t.id] ?? 0) < SQUAD_RULES.total)
   if (incomplete.length > 0) {
     return err(`${incomplete.length} team(s) still need players: ${incomplete.map(t => t.display_name).join(", ")}`)
+  }
+
+  // Compute and persist each team's excess-drop penalty for this auction
+  // before flipping status, so a failure here leaves the auction retryable
+  // rather than completed with silently-missing transfer records. Skipped
+  // for "initial" — no drops are possible in the first auction.
+  if (auction.type !== "initial") {
+    const { data: lockedDrops } = await supabase
+      .from("team_drops")
+      .select("team_id")
+      .eq("auction_id", auction_id)
+      .eq("status", "locked")
+
+    const usedByTeam: Record<string, number> = {}
+    for (const row of (lockedDrops ?? []) as { team_id: string }[]) {
+      usedByTeam[row.team_id] = (usedByTeam[row.team_id] ?? 0) + 1
+    }
+
+    const carryoverEntries = await Promise.all(
+      participatingTeamIds.map(async teamId => [teamId, await getCarryoverForTeam(teamId, auction.created_at, supabase)] as const)
+    )
+    const carryoverByTeam = Object.fromEntries(carryoverEntries)
+
+    const freeBase = freeDropsForType(auction.type as AuctionType)
+    const transferRows = participatingTeamIds.map(teamId => {
+      const carryover = carryoverByTeam[teamId] ?? 0
+      const used = usedByTeam[teamId] ?? 0
+      const totalFree = freeBase + carryover
+      const excess = Math.max(0, used - totalFree)
+      return {
+        team_id: teamId,
+        auction_id,
+        free_transfers_base: freeBase,
+        free_transfers_carryover: carryover,
+        transfers_used: used,
+        excess_drops: excess,
+        points_penalty: excess * DROP_RULES.penalty_per_extra_drop,
+      }
+    })
+
+    const { error: transferErr } = await supabase.from("team_transfer_records").insert(transferRows)
+    if (transferErr) return err(transferErr.message)
   }
 
   const { error } = await supabase

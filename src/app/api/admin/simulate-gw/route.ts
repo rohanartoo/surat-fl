@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole } from "@/lib/roles"
+import { applyDropPenalties } from "@/lib/scoring"
 
 function createClient() {
   return createServiceClient(
@@ -57,6 +58,7 @@ export async function POST(request: NextRequest) {
   }
 
   let totalRows = 0
+  let totalPenaltyRows = 0
   for (const gameweek of gws) {
     // gameweek_points only has a partial unique index (player_id is not null),
     // which Postgres can't use as an ON CONFLICT inference target — so we
@@ -85,7 +87,13 @@ export async function POST(request: NextRequest) {
     const { error: insertErr } = await supabase.from("gameweek_points").insert(rows)
     if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
     totalRows += rows.length
+
+    // Mirrors the real scoring/sync and cron paths so a simulated GW behaves
+    // the same as production — applies any drop-quota penalty already
+    // recorded (via team_transfer_records) against an auction targeting this GW.
+    const { penaltyRows } = await applyDropPenalties(gameweek, supabase)
+    totalPenaltyRows += penaltyRows
   }
 
-  return NextResponse.json({ ok: true, gameweeks: gws, rows: totalRows })
+  return NextResponse.json({ ok: true, gameweeks: gws, rows: totalRows, penaltyRows: totalPenaltyRows })
 }

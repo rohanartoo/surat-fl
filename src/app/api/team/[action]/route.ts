@@ -3,7 +3,7 @@ import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, assertOwnership } from "@/lib/roles"
 import { validateFormationCaps, chooseSlotType } from "@/lib/auction-engine"
 import { getCurrentAuction } from "@/lib/auctions"
-import { getDropQuota } from "@/lib/drops"
+import { getDropQuota, getCarryoverForTeam } from "@/lib/drops"
 import { repairTeamCaptaincy } from "@/lib/roster"
 import { calcDropPrice } from "@/lib/utils"
 import { SQUAD_RULES } from "@/types"
@@ -173,7 +173,7 @@ async function handleMarkDrop(request: NextRequest) {
   await assertOwnership(entry.team_id)
 
   // Find the current auction (for the team_drops foreign key)
-  const auction = await getCurrentAuction<{ id: string; type: string; status: string }>(supabase, "id, type, status")
+  const auction = await getCurrentAuction<{ id: string; type: string; status: string; created_at: string }>(supabase, "id, type, status, created_at")
   if (!auction) return err("No active auction — drops can only be staged during an auction window.")
   // Teams have no squad to drop from during the initial draft.
   if (auction.type === "initial") return err("Players cannot be dropped during the initial auction.")
@@ -213,7 +213,8 @@ async function handleMarkDrop(request: NextRequest) {
     dropped_post_summer: false,
   })
 
-  const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase)
+  const carryover = await getCarryoverForTeam(entry.team_id, auction.created_at, supabase)
+  const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase, carryover)
   const captaincy = await repairTeamCaptaincy(supabase, entry.team_id)
   return NextResponse.json({ success: true, drop_price: dropPrice, quotaSummary, ...captaincy })
 }
@@ -238,7 +239,7 @@ async function handleReturnFromDrop(request: NextRequest) {
   // Find the current auction. Un-staging, like staging, is only possible
   // before the auction starts — once live, any staged drop has already been
   // locked (see rpc_lock_and_credit_drops) and no longer exists to return.
-  const auction = await getCurrentAuction<{ id: string; status: string; type: string }>(supabase, "id, status, type")
+  const auction = await getCurrentAuction<{ id: string; status: string; type: string; created_at: string }>(supabase, "id, status, type, created_at")
   if (!auction) return err("No active auction — staged drops can only be returned during an auction window.")
   if (auction.status !== "pending") return err("This drop has already been locked in and can no longer be returned.")
 
@@ -300,7 +301,8 @@ async function handleReturnFromDrop(request: NextRequest) {
   // Delete the staged drop
   await supabase.from("team_drops").delete().eq("id", drop.id)
 
-  const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase)
+  const carryover = await getCarryoverForTeam(entry.team_id, auction.created_at, supabase)
+  const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase, carryover)
   const captaincy = await repairTeamCaptaincy(supabase, entry.team_id)
   return NextResponse.json({
     success: true,

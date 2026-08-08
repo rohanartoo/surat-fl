@@ -94,7 +94,7 @@ export function DangerZoneCard() {
       })
       const data = await res.json()
       if (!res.ok) { setGwError(data.error ?? "Simulation failed."); return }
-      setGwSuccess(`GW ${data.gameweeks.join(", ")} simulated — ${data.rows} player rows written.`)
+      setGwSuccess(`GW ${data.gameweeks.join(", ")} simulated — ${data.rows} player rows, ${data.penaltyRows ?? 0} penalty rows written.`)
     } finally {
       setGwLoading(false)
     }
