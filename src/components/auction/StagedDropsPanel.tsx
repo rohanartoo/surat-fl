@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useAuction } from "./AuctionProvider"
+import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
@@ -33,16 +34,35 @@ export function StagedDropsPanel() {
   useEffect(() => {
     if (!eligible || !auction) return
     const controller = new AbortController()
-    fetch("/api/drops/staged-detail", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ auction_id: auction.id }),
-      signal: controller.signal,
-    })
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => { if (data) setStagedDropTeams(data.teams ?? []) })
-      .catch(e => { if (e?.name !== "AbortError") console.error("Failed to fetch staged drops:", e) })
-    return () => controller.abort()
+
+    async function load() {
+      try {
+        const res = await fetch("/api/drops/staged-detail", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auction_id: auction!.id }),
+          signal: controller.signal,
+        })
+        if (!res.ok) return
+        const data = await res.json()
+        setStagedDropTeams(data.teams ?? [])
+      } catch (e) {
+        if ((e as { name?: string })?.name !== "AbortError") console.error("Failed to fetch staged drops:", e)
+      }
+    }
+
+    load()
+
+    const supabase = createClient()
+    const channel = supabase
+      .channel("staged-drops")
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_drops" }, () => load())
+      .subscribe()
+
+    return () => {
+      controller.abort()
+      supabase.removeChannel(channel)
+    }
   }, [eligible, auction?.id])
 
   if (!eligible || stagedDropTeams.length === 0) return null
