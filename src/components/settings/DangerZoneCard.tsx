@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,12 +12,30 @@ export function DangerZoneCard() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
+  const [nextGameweek, setNextGameweek] = useState<number | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [gwValue, setGwValue] = useState("38")
   const [gwLoading, setGwLoading] = useState(false)
   const [gwConfirm, setGwConfirm] = useState(false)
+  const [pendingGws, setPendingGws] = useState<number[]>([])
   const [gwExisting, setGwExisting] = useState<number[]>([])
   const [gwError, setGwError] = useState<string | null>(null)
   const [gwSuccess, setGwSuccess] = useState<string | null>(null)
+
+  async function refetchNextGameweek() {
+    const res = await fetch("/api/admin/simulate-gw/next")
+    if (res.ok) {
+      const { nextGameweek: n } = await res.json()
+      setNextGameweek(n)
+    }
+  }
+
+  useEffect(() => {
+    async function load() {
+      await refetchNextGameweek()
+    }
+    load()
+  }, [])
 
   // Accepts "38", "38-40", or "38,39,42" (mix of comma-separated values and ranges)
   function parseGwInput(value: string): number[] | null {
@@ -60,13 +78,7 @@ export function DangerZoneCard() {
     }
   }
 
-  async function handleSimulateGw(skipCheck = false) {
-    const gws = parseGwInput(gwValue)
-    if (!gws) {
-      setGwError("Enter a GW number, range (38-40), or list (38,39,42) between 1 and 100.")
-      return
-    }
-
+  async function handleSimulateGw(gws: number[], skipCheck = false) {
     setGwLoading(true)
     setGwError(null)
     setGwSuccess(null)
@@ -78,6 +90,7 @@ export function DangerZoneCard() {
         if (checkRes.ok) {
           const { exists, existing } = await checkRes.json()
           if (exists) {
+            setPendingGws(gws)
             setGwExisting(existing)
             setGwConfirm(true)
             setGwLoading(false)
@@ -95,9 +108,24 @@ export function DangerZoneCard() {
       const data = await res.json()
       if (!res.ok) { setGwError(data.error ?? "Simulation failed."); return }
       setGwSuccess(`GW ${data.gameweeks.join(", ")} simulated — ${data.rows} player rows, ${data.penaltyRows ?? 0} penalty rows written.`)
+      await refetchNextGameweek()
     } finally {
       setGwLoading(false)
     }
+  }
+
+  function handleSimulateNext() {
+    if (nextGameweek === null) return
+    handleSimulateGw([nextGameweek])
+  }
+
+  function handleSimulateManual() {
+    const gws = parseGwInput(gwValue)
+    if (!gws) {
+      setGwError("Enter a GW number, range (38-40), or list (38,39,42) between 1 and 100.")
+      return
+    }
+    handleSimulateGw(gws)
   }
 
   return (
@@ -146,36 +174,66 @@ export function DangerZoneCard() {
         <div className="space-y-3">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Simulate Gameweek Scores</p>
           <p className="text-xs text-muted-foreground">
-            Generates random points for all rostered players for one or more GWs. Use GW 38+ to avoid conflicts with real data.
-            Enter a single GW (38), a range (38-40), or a list (38,39,42).
+            Generates random points for all rostered players. Any pending drop-quota penalty attaches to whichever GW is simulated next, so simulating in order (the default) is the safe path.
           </p>
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              value={gwValue}
-              onChange={e => { setGwValue(e.target.value); setGwConfirm(false); setGwSuccess(null); setGwError(null) }}
-              className="h-8 w-32 text-sm"
-              placeholder="e.g. 38-40"
-              disabled={gwLoading}
-            />
-            {gwConfirm ? (
-              <div className="flex gap-2 flex-1">
-                <Button size="sm" variant="destructive" className="flex-1 text-xs" disabled={gwLoading} onClick={() => handleSimulateGw(true)}>
+
+          {!gwConfirm && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={gwLoading || nextGameweek === null}
+              onClick={handleSimulateNext}
+              className="w-full text-xs"
+            >
+              {gwLoading ? "Simulating…" : nextGameweek !== null ? `Simulate next GW (GW ${nextGameweek})` : "Loading…"}
+            </Button>
+          )}
+
+          {gwConfirm && (
+            <div className="space-y-2">
+              <p className="text-xs text-amber-500">GW {gwExisting.join(", ")} already {gwExisting.length > 1 ? "have" : "has"} data. Overwrite?</p>
+              <div className="flex gap-2">
+                <Button size="sm" variant="destructive" className="flex-1 text-xs" disabled={gwLoading} onClick={() => handleSimulateGw(pendingGws, true)}>
                   Overwrite
                 </Button>
                 <Button size="sm" variant="outline" className="flex-1 text-xs" disabled={gwLoading} onClick={() => setGwConfirm(false)}>
                   Cancel
                 </Button>
               </div>
-            ) : (
-              <Button size="sm" variant="outline" disabled={gwLoading} onClick={() => handleSimulateGw(false)} className="text-xs">
-                {gwLoading ? "Simulating…" : "Simulate"}
-              </Button>
-            )}
-          </div>
-          {gwConfirm && <p className="text-xs text-amber-500">GW {gwExisting.join(", ")} already {gwExisting.length > 1 ? "have" : "has"} data. Overwrite?</p>}
+            </div>
+          )}
+
           {gwSuccess && <p className="text-xs text-emerald-500">{gwSuccess}</p>}
           {gwError && <p className="text-xs text-destructive">{gwError}</p>}
+
+          <button
+            type="button"
+            className="text-[11px] text-muted-foreground underline underline-offset-2"
+            onClick={() => setShowAdvanced(v => !v)}
+          >
+            {showAdvanced ? "Hide" : "Simulate a specific GW instead"}
+          </button>
+
+          {showAdvanced && (
+            <div className="space-y-2 pt-1">
+              <p className="text-[11px] text-amber-500">
+                Simulating out of order can misattribute a pending drop penalty meant for a later GW to this one instead — only use this for backfilling or testing.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  value={gwValue}
+                  onChange={e => { setGwValue(e.target.value); setGwConfirm(false); setGwSuccess(null); setGwError(null) }}
+                  className="h-8 w-32 text-sm"
+                  placeholder="e.g. 38-40"
+                  disabled={gwLoading}
+                />
+                <Button size="sm" variant="outline" disabled={gwLoading} onClick={handleSimulateManual} className="text-xs">
+                  {gwLoading ? "Simulating…" : "Simulate"}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
       </CardContent>

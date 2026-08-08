@@ -7,7 +7,6 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { roleIsAM } from "@/lib/role-utils"
 import { formatMoney } from "@/lib/utils"
@@ -25,7 +24,6 @@ export function AuctionMasterControls() {
   const [confirmEndDraft, setConfirmEndDraft] = useState(false)
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
   const [excludedTeamIds, setExcludedTeamIds] = useState<string[]>([])
-  const [gwValue, setGwValue] = useState("")
   const [completedTypes, setCompletedTypes] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -169,9 +167,6 @@ export function AuctionMasterControls() {
 
   // ── No auction yet ────────────────────────────────────────────────────────
   if (!auction) {
-    const gwNum = Number(gwValue)
-    const gwValid = Number.isInteger(gwNum) && gwNum >= 1 && gwNum <= 38
-
     return (
       <AMCard title="Auction Master">
         <p className="text-xs text-muted-foreground mb-3">No auction is currently open.</p>
@@ -190,20 +185,6 @@ export function AuctionMasterControls() {
 
           <Separator className="my-1" />
 
-          <label className="text-xs text-muted-foreground" htmlFor="auction-gw-input">
-            Target gameweek — the -4/drop penalty for excess drops in this auction applies here
-          </label>
-          <Input
-            id="auction-gw-input"
-            type="number"
-            min={1}
-            max={38}
-            placeholder="e.g. 7"
-            value={gwValue}
-            onChange={e => setGwValue(e.target.value)}
-            className="h-8"
-          />
-
           {(["post_summer", "mini", "post_jan"] as const).map(type => {
             const alreadyRun = type !== "mini" && completedTypes.has(type)
             return (
@@ -211,8 +192,8 @@ export function AuctionMasterControls() {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={loading || !gwValid || alreadyRun}
-                  onClick={() => post("create", { type, gameweek: gwNum })}
+                  disabled={loading || alreadyRun}
+                  onClick={() => post("create", { type })}
                   className="w-full"
                 >
                   Create {type.replace("_", "-")} auction

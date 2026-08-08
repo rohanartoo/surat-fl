@@ -307,50 +307,22 @@ export async function syncGameweekPoints(
 // =============================================
 
 /**
- * Writes -4pt penalty rows into `gameweek_points` for every team that had
- * excess drops in an auction whose `gameweek` field matches `gw`.
- * Idempotent — deletes existing penalty rows for the GW before inserting.
- *
- * Requires: gameweek_points.player_id is nullable (migration 20260509000001).
+ * Attaches every not-yet-applied drop penalty to gw — "not yet applied" means
+ * a team_transfer_records row with a penalty (points_penalty < 0) whose
+ * applied_gameweek is still null. A penalty only ever gets picked up once,
+ * whichever gameweek happens to be scored/simulated next, so this is
+ * naturally idempotent per GW without needing a delete-then-reinsert dance.
+ * rpc_apply_drop_penalties (see the applied_gameweek migration) does the
+ * claim-and-write atomically, so a partial failure can't double- or
+ * half-apply a penalty.
  */
 export async function applyDropPenalties(
   gw: number,
   supabase: SupabaseClient,
 ): Promise<{ penaltyRows: number }> {
-  // Find all transfer records linked to auctions that target this gameweek
-  const { data: records, error } = await supabase
-    .from("team_transfer_records")
-    .select("team_id, points_penalty, auction:auctions(gameweek)")
-    .lt("points_penalty", 0) // points_penalty is stored negative (excess_drops * DROP_RULES.penalty_per_extra_drop, e.g. -4) — only rows with an actual penalty
-
-  if (error) throw new Error(`applyDropPenalties fetch: ${error.message}`)
-
-  const relevant = (records ?? []).filter(
-    (r: { auction: { gameweek: number | null } | null }) =>
-      r.auction?.gameweek === gw
-  )
-
-  if (relevant.length === 0) return { penaltyRows: 0 }
-
-  // Remove any existing penalty rows for this GW to keep re-runs idempotent
-  await supabase
-    .from("gameweek_points")
-    .delete()
-    .eq("gameweek", gw)
-    .is("player_id", null)
-
-  const rows = relevant.map((r: { team_id: string; points_penalty: number }) => ({
-    team_id: r.team_id,
-    gameweek: gw,
-    player_id: null,
-    points: r.points_penalty, // already negative (e.g. -8 for 2 excess drops)
-    was_subbed_in: false,
-  }))
-
-  const { error: insertErr } = await supabase.from("gameweek_points").insert(rows)
-  if (insertErr) throw new Error(`applyDropPenalties insert: ${insertErr.message}`)
-
-  return { penaltyRows: rows.length }
+  const { data, error } = await supabase.rpc("rpc_apply_drop_penalties", { p_gameweek: gw })
+  if (error) throw new Error(`applyDropPenalties: ${error.message}`)
+  return { penaltyRows: (data as number) ?? 0 }
 }
 
 // =============================================

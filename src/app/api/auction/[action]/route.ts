@@ -55,25 +55,14 @@ export async function POST(request: NextRequest, { params }: Params) {
 
 // ─────────────────────────────────────────────
 // CREATE
-// Body: { type: "initial" | "mini" | "post_jan" | "post_summer", gameweek?: number }
-// gameweek is required for every type except "initial" (no drops are possible
-// in the first auction, so there's no penalty to attribute to a GW) — it's
-// what applyDropPenalties (src/lib/scoring.ts) later matches against when a
-// gameweek is synced/simulated, so the target GW must be locked in up front.
+// Body: { type: "initial" | "mini" | "post_jan" | "post_summer" }
 // ─────────────────────────────────────────────
 async function handleCreate(request: NextRequest) {
   await requireRole("auction_master")
   const supabase = createClient()
-  const { type = "initial", gameweek } = await request.json()
+  const { type = "initial" } = await request.json()
 
   if (!["initial", "mini", "post_jan", "post_summer"].includes(type)) return err("Invalid auction type.")
-
-  const requiresGameweek = type !== "initial"
-  if (requiresGameweek) {
-    if (typeof gameweek !== "number" || !Number.isInteger(gameweek) || gameweek < 1 || gameweek > 38) {
-      return err("A valid gameweek (1–38) is required for this auction type.")
-    }
-  }
 
   const existing = await getCurrentAuction(supabase)
   if (existing) return err("An auction is already open.")
@@ -99,7 +88,6 @@ async function handleCreate(request: NextRequest) {
     .insert({
       type,
       status: "pending",
-      gameweek: requiresGameweek ? gameweek : null,
       current_position_category: "GK",
       free_transfers: freeTransfers,
       auction_order: auctionOrder,
@@ -857,7 +845,7 @@ async function handleEndDraft(request: NextRequest) {
   if (!auction_id) return err("auction_id required.")
 
   const { data: auction } = await supabase
-    .from("auctions").select("status, type, gameweek, auction_order, created_at").eq("id", auction_id).single()
+    .from("auctions").select("status, type, auction_order, created_at").eq("id", auction_id).single()
   if (!auction) return err("Auction not found.", 404)
   if (auction.status !== "active") return err("Auction is not active.")
 
