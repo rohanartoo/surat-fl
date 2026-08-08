@@ -86,8 +86,15 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
 
                 {/* Latest GW score */}
                 {latestGw !== null && (
-                  <td className="py-3 px-3 text-center font-mono font-semibold tabular-nums">
+                  <td
+                    className={cn(
+                      "py-3 px-3 text-center font-mono font-semibold tabular-nums",
+                      row.penalized_gws.includes(latestGw) && "text-amber-500",
+                    )}
+                    title={row.penalized_gws.includes(latestGw) ? "Includes a drop-quota points penalty" : undefined}
+                  >
                     {row.latest_gw_points ?? "—"}
+                    {row.penalized_gws.includes(latestGw) && "*"}
                   </td>
                 )}
 
@@ -101,8 +108,16 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
 
                 {/* Historical GW columns */}
                 {historyGws.map(gw => (
-                  <td key={gw} className="py-3 px-3 text-center font-mono text-xs text-foreground/60 tabular-nums">
+                  <td
+                    key={gw}
+                    className={cn(
+                      "py-3 px-3 text-center font-mono text-xs tabular-nums",
+                      row.penalized_gws.includes(gw) ? "text-amber-500 font-semibold" : "text-foreground/60",
+                    )}
+                    title={row.penalized_gws.includes(gw) ? "Includes a drop-quota points penalty" : undefined}
+                  >
                     {row.by_gameweek[gw] !== undefined ? row.by_gameweek[gw] : "—"}
+                    {row.penalized_gws.includes(gw) && "*"}
                   </td>
                 ))}
               </tr>
@@ -110,6 +125,9 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
           })}
         </tbody>
       </table>
+      {standings.some(r => r.penalized_gws.length > 0) && (
+        <p className="text-xs text-amber-500 mt-2 px-2">* includes a drop-quota points penalty</p>
+      )}
     </div>
   )
 }

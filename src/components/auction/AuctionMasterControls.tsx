@@ -15,7 +15,7 @@ import { SQUAD_RULES } from "@/types"
 import type { Position } from "@/types"
 
 export function AuctionMasterControls() {
-  const { auction, currentLot, lastConcludedLot, bids, teams, myRole, filledSlotsByTeam, refresh } = useAuction()
+  const { auction, currentLot, lastConcludedLot, bids, teams, myRole, filledSlotsByTeam, clubCountsByTeam, refresh } = useAuction()
   const { post: apiPost, loading, error, setError } = useApiAction("/api/auction")
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
@@ -435,6 +435,24 @@ export function AuctionMasterControls() {
   const activeBidders = bids.filter(b => b.is_interested && !b.is_folded)
   const interestedCount = bids.filter(b => b.is_interested).length
 
+  type InterestStatus = "in" | "declined" | "pending" | "full" | "club-capped"
+  function interestStatus(teamId: string): InterestStatus {
+    const filled = filledSlotsByTeam[teamId]?.[player.position] ?? 0
+    if (filled >= SQUAD_RULES.slots[player.position]) return "full"
+    const clubCount = clubCountsByTeam[teamId]?.[player.fpl_team] ?? 0
+    if (clubCount >= SQUAD_RULES.max_per_club) return "club-capped"
+    const bid = bids.find(b => b.team_id === teamId)
+    if (!bid) return "pending"
+    return bid.is_interested ? "in" : "declined"
+  }
+  const INTEREST_STYLES: Record<InterestStatus, { label: string; className: string }> = {
+    in: { label: "In", className: "text-emerald-500 border-emerald-500/30 bg-emerald-500/10" },
+    declined: { label: "Declined", className: "text-muted-foreground border-border/50" },
+    pending: { label: "Pending", className: "text-amber-500 border-amber-500/30 bg-amber-500/10" },
+    full: { label: "Full", className: "text-muted-foreground border-border/50 opacity-60" },
+    "club-capped": { label: "Club-capped", className: "text-muted-foreground border-border/50 opacity-60" },
+  }
+
   // For the assign button: winner is the last active bidder (or current high bidder)
   const pendingWinner = activeBidders.length === 1
     ? teams.find(t => t.id === activeBidders[0].team_id)
@@ -476,6 +494,23 @@ export function AuctionMasterControls() {
                 </Badge>
               )}
             </div>
+
+            <div className="rounded-md border border-border/60 divide-y divide-border/40 overflow-hidden">
+              {participatingTeams.map(team => {
+                const status = interestStatus(team.id)
+                const style = INTEREST_STYLES[status]
+                return (
+                  <div key={team.id} className="flex items-center gap-2 px-2.5 py-1.5">
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
+                    <span className="text-xs flex-1 truncate">{team.short_name}</span>
+                    <Badge variant="outline" className={`text-[10px] h-4.5 px-1.5 py-0 shrink-0 ${style.className}`}>
+                      {style.label}
+                    </Badge>
+                  </div>
+                )
+              })}
+            </div>
+
             <Button
               size="sm"
               variant="outline"

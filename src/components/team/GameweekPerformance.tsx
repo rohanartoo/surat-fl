@@ -101,7 +101,24 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
           <TooltipProvider delayDuration={150}>
             <div className="flex items-baseline justify-between">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Team total</p>
-              <p className="text-2xl font-semibold font-mono">{data!.team_total}</p>
+              <div className="flex items-baseline gap-2">
+                {data!.points_penalty !== null && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-xs font-mono text-amber-500 cursor-help">
+                        ({data!.points_penalty} penalty)
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="text-xs">
+                      Drop-quota penalty applied this gameweek
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                <p className={cn("text-2xl font-semibold font-mono", data!.points_penalty !== null && "text-amber-500")}>
+                  {data!.team_total}
+                  {data!.points_penalty !== null && "*"}
+                </p>
+              </div>
             </div>
 
             <div className="space-y-1.5">

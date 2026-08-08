@@ -336,15 +336,17 @@ export interface StandingRow {
   color: string
   total_points: number
   by_gameweek: Record<number, number>
+  penalized_gws: number[]
   latest_gw: number | null
   latest_gw_points: number | null
   position_change: number
 }
 
 export async function getStandings(supabase: SupabaseClient): Promise<StandingRow[]> {
-  const [{ data: teams }, { data: pointRows }] = await Promise.all([
+  const [{ data: teams }, { data: pointRows }, { data: penaltyRows }] = await Promise.all([
     supabase.from("teams").select("id, display_name, short_name, color"),
     supabase.from("gameweek_points").select("team_id, gameweek, points").eq("counted", true),
+    supabase.from("team_transfer_records").select("team_id, applied_gameweek").not("applied_gameweek", "is", null),
   ])
 
   const standings: Record<string, StandingRow> = {}
@@ -357,6 +359,7 @@ export async function getStandings(supabase: SupabaseClient): Promise<StandingRo
       color: team.color,
       total_points: 0,
       by_gameweek: {},
+      penalized_gws: [],
       latest_gw: null,
       latest_gw_points: null,
       position_change: 0,
@@ -368,6 +371,11 @@ export async function getStandings(supabase: SupabaseClient): Promise<StandingRo
     standings[row.team_id].total_points += row.points
     standings[row.team_id].by_gameweek[row.gameweek] =
       (standings[row.team_id].by_gameweek[row.gameweek] ?? 0) + row.points
+  }
+
+  for (const row of penaltyRows ?? []) {
+    if (!standings[row.team_id]) continue
+    standings[row.team_id].penalized_gws.push(row.applied_gameweek)
   }
 
   const allGws = Object.values(standings).flatMap(r => Object.keys(r.by_gameweek).map(Number))
@@ -512,6 +520,7 @@ export interface TeamGameweekPlayerPerformance {
 export interface TeamGameweekPerformance {
   gameweek: number
   team_total: number
+  points_penalty: number | null
   starting: TeamGameweekPlayerPerformance[]
   bench: TeamGameweekPlayerPerformance[]
 }
@@ -528,16 +537,26 @@ export async function getTeamGameweekPerformance(
   gw: number,
   supabase: SupabaseClient,
 ): Promise<TeamGameweekPerformance> {
-  const { data, error } = await supabase
-    .from("gameweek_points")
-    // gameweek_points has two FKs to players (player_id, subbed_out_player_id) —
-    // the embed must be disambiguated or PostgREST errors with "more than one
-    // relationship was found" and silently returns no data.
-    .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, slot_type, counted, player:players!gameweek_points_player_id_fkey(web_name, position)")
-    .eq("team_id", teamId)
-    .eq("gameweek", gw)
-    .not("player_id", "is", null)
+  const [{ data, error }, { data: penaltyRows, error: penaltyErr }] = await Promise.all([
+    supabase
+      .from("gameweek_points")
+      // gameweek_points has two FKs to players (player_id, subbed_out_player_id) —
+      // the embed must be disambiguated or PostgREST errors with "more than one
+      // relationship was found" and silently returns no data.
+      .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, slot_type, counted, player:players!gameweek_points_player_id_fkey(web_name, position)")
+      .eq("team_id", teamId)
+      .eq("gameweek", gw)
+      .not("player_id", "is", null),
+    supabase
+      .from("team_transfer_records")
+      .select("points_penalty")
+      .eq("team_id", teamId)
+      .eq("applied_gameweek", gw),
+  ])
   if (error) throw new Error(`getTeamGameweekPerformance: ${error.message}`)
+  if (penaltyErr) throw new Error(`getTeamGameweekPerformance: ${penaltyErr.message}`)
+
+  const points_penalty = (penaltyRows ?? []).reduce((sum: number, r: { points_penalty: number }) => sum + r.points_penalty, 0) || null
 
   type Row = {
     player_id: number
@@ -585,7 +604,7 @@ export async function getTeamGameweekPerformance(
 
   const starting = players.filter(p => p.slot_type === "starting")
   const bench = players.filter(p => p.slot_type === "bench")
-  const team_total = players.filter(p => p.counted).reduce((s, p) => s + p.points, 0)
+  const team_total = players.filter(p => p.counted).reduce((s, p) => s + p.points, 0) + (points_penalty ?? 0)
 
-  return { gameweek: gw, team_total, starting, bench }
+  return { gameweek: gw, team_total, points_penalty, starting, bench }
 }
