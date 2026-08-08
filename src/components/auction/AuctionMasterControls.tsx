@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useAuction } from "./AuctionProvider"
 import { useApiAction } from "@/hooks/useApiAction"
+import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -25,6 +26,18 @@ export function AuctionMasterControls() {
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
   const [excludedTeamIds, setExcludedTeamIds] = useState<string[]>([])
   const [gwValue, setGwValue] = useState("")
+  const [completedTypes, setCompletedTypes] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (auction) return
+    const supabase = createClient()
+    supabase
+      .from("auctions")
+      .select("type")
+      .eq("status", "completed")
+      .in("type", ["initial", "post_summer", "post_jan"])
+      .then(({ data }) => setCompletedTypes(new Set((data ?? []).map(r => r.type as string))))
+  }, [auction])
 
   if (!roleIsAM(myRole)) return null
 
@@ -166,11 +179,14 @@ export function AuctionMasterControls() {
           <Button
             variant="outline"
             size="sm"
-            disabled={loading}
+            disabled={loading || completedTypes.has("initial")}
             onClick={() => post("create", { type: "initial" })}
           >
             Create initial auction
           </Button>
+          {completedTypes.has("initial") && (
+            <p className="text-[11px] text-muted-foreground -mt-1.5">Already run this season.</p>
+          )}
 
           <Separator className="my-1" />
 
@@ -188,17 +204,25 @@ export function AuctionMasterControls() {
             className="h-8"
           />
 
-          {(["post_summer", "mini", "post_jan"] as const).map(type => (
-            <Button
-              key={type}
-              variant="outline"
-              size="sm"
-              disabled={loading || !gwValid}
-              onClick={() => post("create", { type, gameweek: gwNum })}
-            >
-              Create {type.replace("_", "-")} auction
-            </Button>
-          ))}
+          {(["post_summer", "mini", "post_jan"] as const).map(type => {
+            const alreadyRun = type !== "mini" && completedTypes.has(type)
+            return (
+              <div key={type} className="flex flex-col gap-0.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={loading || !gwValid || alreadyRun}
+                  onClick={() => post("create", { type, gameweek: gwNum })}
+                  className="w-full"
+                >
+                  Create {type.replace("_", "-")} auction
+                </Button>
+                {alreadyRun && (
+                  <p className="text-[11px] text-muted-foreground">Already run this season.</p>
+                )}
+              </div>
+            )
+          })}
         </div>
         {error && <p className="text-xs text-destructive mt-2">{error}</p>}
       </AMCard>

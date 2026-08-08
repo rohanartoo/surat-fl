@@ -78,6 +78,14 @@ async function handleCreate(request: NextRequest) {
   const existing = await getCurrentAuction(supabase)
   if (existing) return err("An auction is already open.")
 
+  // initial/post_summer/post_jan each happen exactly once per season — mini
+  // auctions are the only type that can run repeatedly.
+  if (type !== "mini") {
+    const { data: alreadyRun } = await supabase
+      .from("auctions").select("id").eq("type", type).eq("status", "completed").limit(1).maybeSingle()
+    if (alreadyRun) return err(`${type === "initial" ? "An" : "A"} ${type.replace("_", "-")} auction has already run this season.`)
+  }
+
   const freeTransfers = type === "initial" || type === "post_jan" || type === "post_summer" ? 3 : 2
 
   // Seed auction_order from teams.auction_order field
