@@ -195,6 +195,13 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
     ? validateFormation(startingXI.map(e => ({ position: e.player.position })))
     : null
 
+  // The server auto-repairs captaincy on swap/drop/return/loan-transfer, but
+  // a couple of paths don't run that repair (a freshly drafted squad before
+  // its first swap, and an auction cancel restoring dropped players) — so a
+  // captain-less Starting XI, while rare, is still reachable. Surface it
+  // rather than silently scoring zero captain bonus that gameweek.
+  const noCaptainInXI = squadComplete && !startingXI.some(e => e.is_captain)
+
   const eligiblePartnerIds = useMemo(() => {
     if (!selectedEntry) return new Set<string>()
     const oppositeSlot = selectedEntry.slot_type === "starting" ? "bench" : "starting"
@@ -371,6 +378,12 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
       {formationError && (
         <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
           ⚠ Illegal Starting XI: {formationError}. Swap a bench player in before the next gameweek.
+        </p>
+      )}
+
+      {noCaptainInXI && (
+        <p className="text-sm text-amber-500 bg-amber-500/10 px-3 py-2 rounded-md">
+          ⚠ No captain set in your Starting XI. Set one before the next gameweek or you&apos;ll miss the points bonus.
         </p>
       )}
 
