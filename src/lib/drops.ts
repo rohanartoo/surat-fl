@@ -5,10 +5,12 @@ type SupabaseClient = any
 
 /** Free drop allowance for a given auction type. */
 export function freeDropsForType(type: AuctionType): number {
-  if (type === "initial" || type === "post_jan" || type === "post_summer") {
-    return DROP_RULES.free_drops_first_inseason
+  switch (type) {
+    case "initial": return DROP_RULES.free_drops_first_inseason
+    case "post_jan": return DROP_RULES.free_drops_post_jan
+    case "post_summer": return DROP_RULES.free_drops_post_summer
+    default: return DROP_RULES.free_drops_standard
   }
-  return DROP_RULES.free_drops_standard
 }
 
 /**

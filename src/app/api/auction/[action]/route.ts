@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
-import { getNextBidder, isSoloWin, POSITION_ORDER, validateBid } from "@/lib/auction-engine"
+import { getNextBidder, isSoloWin, POSITION_ORDER, validateBid, validateFormation } from "@/lib/auction-engine"
 import { lockAndCommitDrops, checkReDraftEligibility, freeDropsForType, getCarryoverForTeam } from "@/lib/drops"
 import { getCurrentAuction } from "@/lib/auctions"
 import type { Position, AuctionType } from "@/types"
@@ -247,10 +247,16 @@ async function handleOpenLot(request: NextRequest) {
     return err(`Player is ${player.position} but auction is on ${auction.current_position_category}.`)
   }
 
-  const { data: existingRoster } = await supabase
+  // .limit(1) + array-length check instead of .maybeSingle() — maybeSingle()
+  // returns an ERROR (not data) when more than one row matches, and that
+  // error was previously discarded here, so a player already on two teams'
+  // rosters (reachable in principle: unique_active_player_per_team is scoped
+  // per-team, not global) would silently sail through this check.
+  const { data: existingRoster, error: existingRosterErr } = await supabase
     .from("roster_entries").select("id").eq("player_id", player_id)
-    .neq("slot_type", "dropped").maybeSingle()
-  if (existingRoster) return err("Player is already on a team's roster.")
+    .neq("slot_type", "dropped").limit(1)
+  if (existingRosterErr) return err(existingRosterErr.message, 500)
+  if (existingRoster && existingRoster.length > 0) return err("Player is already on a team's roster.")
 
   const auctionOrder = (auction.auction_order as string[]) ?? []
   const bidStartIndex = auction.current_bidder_index ?? 0
@@ -829,44 +835,13 @@ async function handleCancel(request: NextRequest) {
   const { auction_id } = await request.json()
   if (!auction_id) return err("auction_id required.")
 
-  const { data: auction } = await supabase
-    .from("auctions").select("status").eq("id", auction_id).single()
-  if (!auction) return err("Auction not found.", 404)
-  if (!["pending", "active"].includes(auction.status)) return err("Only pending or active auctions can be cancelled.")
-
-  // Capture drop records before any restoration so we know which players to un-drop.
-  // For a pending auction these are "staged"; for an active auction they are "locked".
-  const { data: dropRecords } = await supabase
-    .from("team_drops")
-    .select("player_id")
-    .eq("auction_id", auction_id)
-
-  // If active, restore budgets, player prices, and rosters from the pre-auction snapshot.
-  // Note: restoreFromSnapshot also re-inserts the team_drops as "staged" — we clean those
-  // up explicitly below since there is no ON DELETE CASCADE from auctions → team_drops.
-  if (auction.status === "active") {
-    await restoreFromSnapshot(auction_id, supabase)
-  }
-
-  // Remove all drop records for this auction. After a cancel the teams start fresh —
-  // no staged or orphaned drops should remain pointing at a deleted auction.
-  await supabase.from("team_drops").delete().eq("auction_id", auction_id)
-
-  // Move each dropped player's roster entry back to bench so they appear on the
-  // team's squad without any drop marker. bench_order is set to null; teams can
-  // rearrange their bench manually after the cancel if needed.
-  if (dropRecords && dropRecords.length > 0) {
-    const playerIds = dropRecords.map(d => d.player_id)
-    await supabase
-      .from("roster_entries")
-      .update({ slot_type: "bench", bench_order: null })
-      .in("player_id", playerIds)
-      .eq("slot_type", "dropped")
-  }
-
-  // Delete the auction (cascades to lots, bids, log, transfer records, snapshot)
-  const { error: deleteErr } = await supabase.from("auctions").delete().eq("id", auction_id)
-  if (deleteErr) return err(deleteErr.message)
+  // Snapshot restore, drop cleanup, and the auction delete all happen in one
+  // transaction (see rpc_cancel_auction) — previously these were four
+  // sequential, mostly-unchecked steps, so a failure partway through could
+  // leave dropped players stuck in slot_type='dropped' with no drop record
+  // and no auction left to reference.
+  const { error } = await supabase.rpc("rpc_cancel_auction", { p_auction_id: auction_id })
+  if (error) return err(error.message)
 
   return NextResponse.json({ success: true })
 }
@@ -895,22 +870,36 @@ async function handleEndDraft(request: NextRequest) {
     .maybeSingle()
   if (openLot) return err("A lot is currently open. Close it before ending the draft.")
 
-  // Validate all participating teams (in auction_order) have 15 players
+  // Validate all participating teams (in auction_order) have EXACTLY 15
+  // players (not just "at least" — a squad over 15, only reachable via some
+  // other bug, should block end-of-draft just as loudly as one under 15) and
+  // a legal Starting XI.
   const participatingTeamIds = (auction.auction_order as string[]) ?? []
   const { data: teams } = await supabase.from("teams").select("id, display_name").in("id", participatingTeamIds)
   const { data: roster } = await supabase
     .from("roster_entries")
-    .select("team_id")
+    .select("team_id, slot_type, player:players(position)")
     .in("slot_type", ["starting", "bench"])
 
   const countByTeam: Record<string, number> = {}
-  for (const row of roster ?? []) {
+  const startingByTeam: Record<string, { position: Position }[]> = {}
+  for (const row of (roster ?? []) as unknown as { team_id: string; slot_type: string; player: { position: Position } | null }[]) {
     countByTeam[row.team_id] = (countByTeam[row.team_id] ?? 0) + 1
+    if (row.slot_type === "starting" && row.player) {
+      (startingByTeam[row.team_id] ??= []).push({ position: row.player.position })
+    }
   }
 
-  const incomplete = (teams ?? []).filter(t => (countByTeam[t.id] ?? 0) < SQUAD_RULES.total)
+  const incomplete = (teams ?? []).filter(t => (countByTeam[t.id] ?? 0) !== SQUAD_RULES.total)
   if (incomplete.length > 0) {
-    return err(`${incomplete.length} team(s) still need players: ${incomplete.map(t => t.display_name).join(", ")}`)
+    return err(`${incomplete.length} team(s) don't have exactly ${SQUAD_RULES.total} players: ${incomplete.map(t => t.display_name).join(", ")}`)
+  }
+
+  const illegalFormations = (teams ?? [])
+    .map(t => ({ team: t, formationError: validateFormation(startingByTeam[t.id] ?? []) }))
+    .filter(x => x.formationError !== null)
+  if (illegalFormations.length > 0) {
+    return err(`Illegal Starting XI: ${illegalFormations.map(x => `${x.team.display_name} (${x.formationError})`).join("; ")}`)
   }
 
   // Compute and persist each team's excess-drop penalty for this auction
@@ -951,7 +940,12 @@ async function handleEndDraft(request: NextRequest) {
       }
     })
 
-    const { error: transferErr } = await supabase.from("team_transfer_records").insert(transferRows)
+    // Upsert, not insert — if the status flip below fails, a retry of this
+    // same handler must not hit unique_team_auction and get permanently
+    // stuck unable to ever end the draft.
+    const { error: transferErr } = await supabase
+      .from("team_transfer_records")
+      .upsert(transferRows, { onConflict: "team_id,auction_id" })
     if (transferErr) return err(transferErr.message)
   }
 

@@ -50,10 +50,12 @@ async function handleTargetedReset(auction_id: string) {
   // Clear all lots, bids, and log entries for this auction so the AM can
   // start fresh — but keep the auction record itself in pending state with
   // the configured auction_order intact.
-  await Promise.all([
+  const [{ error: lotsErr }, { error: logErr }] = await Promise.all([
     supabase.from("auction_lots").delete().eq("auction_id", auction_id),
     supabase.from("auction_log").delete().eq("auction_id", auction_id),
   ])
+  if (lotsErr) return NextResponse.json({ error: `auction_lots: ${lotsErr.message}` }, { status: 500 })
+  if (logErr) return NextResponse.json({ error: `auction_log: ${logErr.message}` }, { status: 500 })
 
   const { error: auctionErr } = await supabase
     .from("auctions")

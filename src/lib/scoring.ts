@@ -186,10 +186,15 @@ export async function syncGameweekPoints(
     let updated = 0
     for (const row of existing as { id: string; player_id: number; is_captain: boolean }[]) {
       const stats = liveStats[row.player_id]
-      const basePoints = stats?.total_points ?? 0
+      // A player missing from this GW's live response (a deleted/reissued
+      // FPL element — rare, but has happened) is not the same as a player
+      // who genuinely scored 0. Leave their historical points untouched
+      // rather than overwriting real points with a false zero.
+      if (!stats) continue
+      const basePoints = stats.total_points
       const { error } = await supabase
         .from("gameweek_points")
-        .update({ points: row.is_captain ? basePoints * 2 : basePoints, stat_breakdown: stats ?? null })
+        .update({ points: row.is_captain ? basePoints * 2 : basePoints, stat_breakdown: stats })
         .eq("id", row.id)
       if (error) throw new Error(`syncGameweekPoints update: ${error.message}`)
       updated++
@@ -371,7 +376,12 @@ export interface StandingRow {
 export async function getStandings(supabase: SupabaseClient): Promise<StandingRow[]> {
   const [{ data: teams }, { data: pointRows }, { data: penaltyRows }] = await Promise.all([
     supabase.from("teams").select("id, display_name, short_name, color"),
-    supabase.from("gameweek_points").select("team_id, gameweek, points").eq("counted", true),
+    // Explicit .range() — without one, an unbounded select falls back to
+    // Supabase's default page size (commonly 1000), which a full season for
+    // even this 7-team league (7 * 15 * 38 ≈ 4,000 rows) can exceed, silently
+    // truncating standings partway through the season. 20,000 is comfortable
+    // headroom; a real cap would need explicit pagination, not a bigger number.
+    supabase.from("gameweek_points").select("team_id, gameweek, points").eq("counted", true).range(0, 19999),
     supabase.from("team_transfer_records").select("team_id, applied_gameweek").not("applied_gameweek", "is", null),
   ])
 

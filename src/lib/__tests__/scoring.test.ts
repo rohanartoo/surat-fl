@@ -272,6 +272,18 @@ describe("determineEffectiveCaptain", () => {
 
 // ─── getStandings ─────────────────────────────────────────────────────────────
 
+function makeQueryChain(data: unknown) {
+  const chain = Promise.resolve({ data }) as Promise<{ data: unknown }> & {
+    eq: () => ReturnType<typeof makeQueryChain>
+    not: () => ReturnType<typeof makeQueryChain>
+    range: () => ReturnType<typeof makeQueryChain>
+  }
+  chain.eq = () => makeQueryChain(data)
+  chain.not = () => makeQueryChain(data)
+  chain.range = () => makeQueryChain(data)
+  return chain
+}
+
 function makeSupabase(
   teams: { id: string; display_name: string; short_name: string; color: string }[],
   pointRows: { team_id: string; gameweek: number; points: number }[],
@@ -281,13 +293,7 @@ function makeSupabase(
     from: (table: string) => ({
       select: () => {
         const data = table === "teams" ? teams : table === "team_transfer_records" ? penaltyRows : pointRows
-        const result = Promise.resolve({ data }) as Promise<{ data: unknown }> & {
-          eq: () => Promise<{ data: unknown }>
-          not: () => Promise<{ data: unknown }>
-        }
-        result.eq = () => Promise.resolve({ data })
-        result.not = () => Promise.resolve({ data })
-        return result
+        return makeQueryChain(data)
       },
     }),
   }

@@ -14,6 +14,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import type { TeamGameweekPerformance } from "@/lib/scoring"
+import { SQUAD_RULES } from "@/types"
 
 const SEASON_LENGTH = 38
 
@@ -99,6 +100,12 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
           </p>
         ) : (
           <TooltipProvider delayDuration={150}>
+            {data!.starting.length < SQUAD_RULES.starting && (
+              <p className="text-xs text-amber-500 bg-amber-500/10 px-3 py-2 rounded-md">
+                ⚠ Only {data!.starting.length}/{SQUAD_RULES.starting} Starting XI slots were filled this gameweek —
+                no auto-subs were possible for the missing slots, so the team total reflects fewer than a full XI.
+              </p>
+            )}
             <div className="flex items-baseline justify-between">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Team total</p>
               <div className="flex items-baseline gap-2">

@@ -21,6 +21,7 @@ export function DangerZoneCard() {
   const [gwExisting, setGwExisting] = useState<number[]>([])
   const [gwError, setGwError] = useState<string | null>(null)
   const [gwSuccess, setGwSuccess] = useState<string | null>(null)
+  const [gwRealDataMessage, setGwRealDataMessage] = useState<string | null>(null)
 
   async function refetchNextGameweek() {
     const res = await fetch("/api/admin/simulate-gw/next")
@@ -78,7 +79,7 @@ export function DangerZoneCard() {
     }
   }
 
-  async function handleSimulateGw(gws: number[], skipCheck = false) {
+  async function handleSimulateGw(gws: number[], skipCheck = false, forceReal = false) {
     setGwLoading(true)
     setGwError(null)
     setGwSuccess(null)
@@ -103,10 +104,22 @@ export function DangerZoneCard() {
       const res = await fetch("/api/admin/simulate-gw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gameweeks: gws }),
+        body: JSON.stringify({ gameweeks: gws, force_real_overwrite: forceReal }),
       })
       const data = await res.json()
-      if (!res.ok) { setGwError(data.error ?? "Simulation failed."); return }
+      if (!res.ok) {
+        // The server can tell real FPL-synced data apart from previously
+        // simulated data — surface that distinctly, with its own stronger
+        // confirmation, instead of folding it into the generic error message.
+        if (data.error === "REAL_DATA_EXISTS") {
+          setPendingGws(gws)
+          setGwRealDataMessage(data.message ?? "This gameweek has real, FPL-synced results.")
+          return
+        }
+        setGwError(data.error ?? "Simulation failed.")
+        return
+      }
+      setGwRealDataMessage(null)
       setGwSuccess(`GW ${data.gameweeks.join(", ")} simulated — ${data.rows} player rows, ${data.penaltyRows ?? 0} penalty rows written.`)
       await refetchNextGameweek()
     } finally {
@@ -189,7 +202,7 @@ export function DangerZoneCard() {
             </Button>
           )}
 
-          {gwConfirm && (
+          {gwConfirm && !gwRealDataMessage && (
             <div className="space-y-2">
               <p className="text-xs text-amber-500">GW {gwExisting.join(", ")} already {gwExisting.length > 1 ? "have" : "has"} data. Overwrite?</p>
               <div className="flex gap-2">
@@ -197,6 +210,32 @@ export function DangerZoneCard() {
                   Overwrite
                 </Button>
                 <Button size="sm" variant="outline" className="flex-1 text-xs" disabled={gwLoading} onClick={() => setGwConfirm(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {gwRealDataMessage && (
+            <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-2">
+              <p className="text-xs text-destructive font-medium">{gwRealDataMessage}</p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="flex-1 text-xs"
+                  disabled={gwLoading}
+                  onClick={() => handleSimulateGw(pendingGws, true, true)}
+                >
+                  Yes, destroy real data
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-xs"
+                  disabled={gwLoading}
+                  onClick={() => { setGwRealDataMessage(null); setGwConfirm(false) }}
+                >
                   Cancel
                 </Button>
               </div>

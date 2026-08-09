@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
   const gameweeks: unknown[] = Array.isArray(body.gameweeks)
     ? body.gameweeks
     : typeof body.gameweek === "number" ? [body.gameweek] : []
+  const forceRealOverwrite = body.force_real_overwrite === true
 
   if (
     gameweeks.length === 0 ||
@@ -55,6 +56,26 @@ export async function POST(request: NextRequest) {
   if (rosterErr) return NextResponse.json({ error: rosterErr.message }, { status: 500 })
   if (!rosterRows || rosterRows.length === 0) {
     return NextResponse.json({ error: "No rostered players found. Run a draft first." }, { status: 400 })
+  }
+
+  // A GW with any non-simulated row has real FPL-synced results — refuse to
+  // clobber those without an explicit second confirmation. The generic
+  // "data already exists, overwrite?" check (simulate-gw/check) can't tell
+  // real data from a previous simulation; this can.
+  if (!forceRealOverwrite) {
+    const { data: realRows, error: realErr } = await supabase
+      .from("gameweek_points")
+      .select("gameweek")
+      .in("gameweek", gws)
+      .eq("is_simulated", false)
+      .limit(1)
+    if (realErr) return NextResponse.json({ error: realErr.message }, { status: 500 })
+    if (realRows && realRows.length > 0) {
+      return NextResponse.json({
+        error: "REAL_DATA_EXISTS",
+        message: `GW ${realRows[0].gameweek} has real, FPL-synced results — simulating over it would permanently destroy them. Pass force_real_overwrite to proceed anyway.`,
+      }, { status: 409 })
+    }
   }
 
   let totalRows = 0
@@ -80,6 +101,7 @@ export async function POST(request: NextRequest) {
         slot_type: r.slot_type,
         counted: r.slot_type === "starting",
         is_captain: r.is_captain,
+        is_simulated: true,
       }
     })
 

@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react"
 import { createClient } from "@/lib/supabase/client"
@@ -202,15 +203,28 @@ export function AuctionProvider({
 
   // ── Realtime subscriptions ────────────────────────────────────────────────
 
+  // During active bidding, auction_lots/bids can change several times a
+  // second across all 7 clients — each change previously triggered its own
+  // full refresh() (several queries). Debouncing collapses a rapid burst of
+  // realtime events into a single refresh shortly after the burst settles.
+  // Direct callers of `refresh()` itself (e.g. immediately after the current
+  // user's own action) are untouched — only the realtime-triggered calls
+  // below go through this.
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debouncedRefresh = useCallback(() => {
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    refreshTimerRef.current = setTimeout(() => { refresh() }, 200)
+  }, [refresh])
+
   useEffect(() => {
     const lotsChannel = supabase
       .channel("auction-lots")
-      .on("postgres_changes", { event: "*", schema: "public", table: "auction_lots" }, () => refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "auction_lots" }, () => debouncedRefresh())
       .subscribe()
 
     const bidsChannel = supabase
       .channel("auction-bids")
-      .on("postgres_changes", { event: "*", schema: "public", table: "bids" }, () => refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "bids" }, () => debouncedRefresh())
       .subscribe()
 
     const logChannel = supabase
@@ -237,16 +251,19 @@ export function AuctionProvider({
 
     const auctionsChannel = supabase
       .channel("auction-status")
-      .on("postgres_changes", { event: "*", schema: "public", table: "auctions" }, () => refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "auctions" }, () => debouncedRefresh())
       .subscribe()
 
+    // UPDATE wasn't subscribed here before — only INSERT/DELETE — so a slot
+    // swap between two existing starters (an UPDATE on both rows' slot_type,
+    // no rows added/removed) never propagated live to other clients.
     const rosterChannel = supabase
       .channel("auction-roster")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "roster_entries" }, () => refresh())
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "roster_entries" }, () => refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "roster_entries" }, () => debouncedRefresh())
       .subscribe()
 
     return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
       supabase.removeChannel(lotsChannel)
       supabase.removeChannel(bidsChannel)
       supabase.removeChannel(logChannel)
@@ -254,7 +271,7 @@ export function AuctionProvider({
       supabase.removeChannel(auctionsChannel)
       supabase.removeChannel(rosterChannel)
     }
-  }, [supabase, refresh])
+  }, [supabase, debouncedRefresh])
 
   return (
     <AuctionContext.Provider
