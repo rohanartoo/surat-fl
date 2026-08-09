@@ -37,14 +37,21 @@ export async function POST(request: Request) {
     // seasons, or a bootstrap hiccup) every gameweek counts as past, so a
     // stray manual sync can never rebuild history from current squads.
     const bootstrap = await fetchFplBootstrap()
-    const currentGw = bootstrap.events.find(e => e.is_current)?.id ?? null
-    const preserveRoster = currentGw === null || gameweek !== currentGw
+    const currentEvent = bootstrap.events.find(e => e.is_current) ?? null
+    const preserveRoster = currentEvent === null || gameweek !== currentEvent.id
 
     const supabase = createClient()
-    const [pointsResult, penaltyResult] = await Promise.all([
-      syncGameweekPoints(gameweek, supabase, { preserveRoster }),
-      applyDropPenalties(gameweek, supabase),
-    ])
+    const pointsResult = await syncGameweekPoints(gameweek, supabase, {
+      preserveRoster,
+      gwFinished: currentEvent?.finished,
+    })
+    // A pending drop penalty must only ever attach to the live/next gameweek
+    // actually being scored for the first time — not to a `preserveRoster`
+    // re-sync of an older GW (e.g. refreshing a past GW after an FPL bonus
+    // correction), which would permanently steal a penalty meant for later.
+    const penaltyResult = preserveRoster
+      ? { penaltyRows: 0 }
+      : await applyDropPenalties(gameweek, supabase)
 
     return NextResponse.json({ ok: true, gameweek, ...pointsResult, ...penaltyResult })
   } catch (err) {

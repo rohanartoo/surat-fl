@@ -363,7 +363,7 @@ export function AuctionMasterControls() {
           </p>
         ) : (
           <p className="text-xs text-muted-foreground italic mb-3">
-            Click "Nominate" on a player in the list to open a lot.
+            Click &quot;Nominate&quot; on a player in the list to open a lot.
           </p>
         )}
 

@@ -11,12 +11,14 @@ interface AuctionTimerProps {
 
 export function AuctionTimer({ timerStartedAt, phase }: AuctionTimerProps) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
+  const active = !!timerStartedAt && phase === "interest"
 
   useEffect(() => {
-    if (!timerStartedAt || phase !== "interest") {
-      setSecondsLeft(null)
-      return
-    }
+    // Nothing to tick — render guards below already hide output whenever
+    // `!active`, regardless of whatever stale value `secondsLeft` still
+    // holds, so there's no need to reset it here (which would mean calling
+    // setState synchronously and directly in the effect body).
+    if (!active) return
 
     function tick() {
       const elapsed = (Date.now() - new Date(timerStartedAt!).getTime()) / 1000
@@ -27,7 +29,7 @@ export function AuctionTimer({ timerStartedAt, phase }: AuctionTimerProps) {
     tick()
     const id = setInterval(tick, 250)
     return () => clearInterval(id)
-  }, [timerStartedAt, phase])
+  }, [active, timerStartedAt])
 
   if (phase === "bidding") {
     return (
@@ -38,7 +40,7 @@ export function AuctionTimer({ timerStartedAt, phase }: AuctionTimerProps) {
     )
   }
 
-  if (phase !== "interest" || secondsLeft === null) return null
+  if (!active || secondsLeft === null) return null
 
   const isUrgent = secondsLeft <= 10
   const pct = (secondsLeft / AUCTION_TIMER_SECONDS) * 100

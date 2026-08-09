@@ -12,5 +12,9 @@ export function safeCompare(a: string, b: string): boolean {
 }
 
 export function verifySyncSecret(authHeader: string | null): boolean {
+  // Fail closed: if SYNC_SECRET is unset (missing env var, wrong Vercel
+  // environment), the expected value would otherwise become the literal
+  // string "Bearer undefined" — trivially guessable, not a real secret.
+  if (!process.env.SYNC_SECRET) return false
   return safeCompare(authHeader ?? "", `Bearer ${process.env.SYNC_SECRET}`)
 }

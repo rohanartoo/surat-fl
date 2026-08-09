@@ -139,18 +139,27 @@ async function handleSetCaptain(request: NextRequest) {
   await assertOwnership(entry.team_id)
 
   const field = role === "captain" ? "is_captain" : "is_vice_captain"
+  const otherField = role === "captain" ? "is_vice_captain" : "is_captain"
 
   // Clear existing flag on all entries for this team
   await supabase.from("roster_entries")
     .update({ [field]: false })
     .eq("team_id", entry.team_id)
 
-  // Set on target
-  await supabase.from("roster_entries")
-    .update({ [field]: true })
+  // Set on target, and clear the OTHER role on that same entry — captain and
+  // vice-captain must never be the same player, or the VC fallback becomes
+  // meaningless (there's no one left to hand the armband to if he blanks).
+  const { error: setErr } = await supabase.from("roster_entries")
+    .update({ [field]: true, [otherField]: false })
     .eq("id", entry_id)
+  if (setErr) return err(setErr.message)
 
-  return NextResponse.json({ success: true })
+  // If clearing the other role just left the team without a captain or VC
+  // (e.g. VC was assigned to the current captain), repair it immediately
+  // rather than leaving the team armband-less until some other mutation
+  // happens to trigger a repair.
+  const captaincy = await repairTeamCaptaincy(supabase, entry.team_id)
+  return NextResponse.json({ success: true, ...captaincy })
 }
 
 // ─────────────────────────────────────────────
@@ -192,26 +201,17 @@ async function handleMarkDrop(request: NextRequest) {
 
   const dropPrice = calcDropPrice(entry.base_price)
 
-  // Move to dropped slot
-  await supabase.from("roster_entries").update({
-    slot_type: "dropped",
-    bench_order: null,
-    is_captain: false,
-    is_vice_captain: false,
-  }).eq("id", entry_id)
-
-  // Create staged drop record. dropped_post_summer is kept for history only —
-  // it no longer affects re-draft eligibility (a post-summer drop is a
+  // Moves the player to the dropped slot AND creates the staged-drop record
+  // atomically (see rpc_mark_drop) — dropped_post_summer is kept for history
+  // only, it no longer affects re-draft eligibility (a post-summer drop is a
   // pre-January drop).
-  await supabase.from("team_drops").insert({
-    team_id: entry.team_id,
-    player_id: entry.player_id,
-    auction_id: auction.id,
-    drop_price: dropPrice,
-    status: "staged",
-    dropped_post_january: isPermanentDrop,
-    dropped_post_summer: false,
+  const { error: dropErr } = await supabase.rpc("rpc_mark_drop", {
+    p_entry_id: entry_id,
+    p_drop_price: dropPrice,
+    p_auction_id: auction.id,
+    p_dropped_post_january: isPermanentDrop,
   })
+  if (dropErr) return err(dropErr.message)
 
   const carryover = await getCarryoverForTeam(entry.team_id, auction.created_at, supabase)
   const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase, carryover)
@@ -293,13 +293,15 @@ async function handleReturnFromDrop(request: NextRequest) {
     }
   }
 
-  await supabase.from("roster_entries").update({
-    slot_type: targetSlot,
-    bench_order: targetSlot === "bench" ? benchOrder : null,
-  }).eq("id", entry_id)
-
-  // Delete the staged drop
-  await supabase.from("team_drops").delete().eq("id", drop.id)
+  // Restores the roster entry AND deletes the staged-drop record atomically
+  // (see rpc_return_from_drop).
+  const { error: returnErr } = await supabase.rpc("rpc_return_from_drop", {
+    p_entry_id: entry_id,
+    p_drop_id: drop.id,
+    p_target_slot: targetSlot,
+    p_bench_order: targetSlot === "bench" ? benchOrder : null,
+  })
+  if (returnErr) return err(returnErr.message)
 
   const carryover = await getCarryoverForTeam(entry.team_id, auction.created_at, supabase)
   const quotaSummary = await getDropQuota(entry.team_id, auction.id, auction.type as AuctionType, supabase, carryover)

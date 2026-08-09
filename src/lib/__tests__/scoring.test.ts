@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { applyAutoSubs, determineEffectiveCaptain, getStandings } from "@/lib/scoring"
+import { applyAutoSubs, determineEffectiveCaptain, getStandings, getGameweekHighlights } from "@/lib/scoring"
 import { validateFormation } from "@/lib/auction-engine"
 import type { FplLiveStats } from "@/lib/fpl"
 import type { Position } from "@/types"
@@ -275,13 +275,18 @@ describe("determineEffectiveCaptain", () => {
 function makeSupabase(
   teams: { id: string; display_name: string; short_name: string; color: string }[],
   pointRows: { team_id: string; gameweek: number; points: number }[],
+  penaltyRows: { team_id: string; applied_gameweek: number }[] = [],
 ) {
   return {
     from: (table: string) => ({
       select: () => {
-        const data = table === "teams" ? teams : pointRows
-        const result = Promise.resolve({ data }) as Promise<{ data: unknown }> & { eq: () => Promise<{ data: unknown }> }
+        const data = table === "teams" ? teams : table === "team_transfer_records" ? penaltyRows : pointRows
+        const result = Promise.resolve({ data }) as Promise<{ data: unknown }> & {
+          eq: () => Promise<{ data: unknown }>
+          not: () => Promise<{ data: unknown }>
+        }
         result.eq = () => Promise.resolve({ data })
+        result.not = () => Promise.resolve({ data })
         return result
       },
     }),
@@ -356,5 +361,105 @@ describe("getStandings", () => {
     const result = await getStandings(makeSupabase([T1, T2], rows))
     const t2 = result.find(r => r.team_id === "t2")
     expect(t2?.position_change).toBeLessThan(0)
+  })
+
+  it("lists a team's penalized_gws from applied drop-quota penalties", async () => {
+    const rows = [
+      { team_id: "t1", gameweek: 1, points: 30 },
+      { team_id: "t2", gameweek: 1, points: 50 },
+    ]
+    const penalties = [{ team_id: "t1", applied_gameweek: 1 }]
+    const result = await getStandings(makeSupabase([T1, T2], rows, penalties))
+    const t1 = result.find(r => r.team_id === "t1")
+    const t2 = result.find(r => r.team_id === "t2")
+    expect(t1?.penalized_gws).toEqual([1])
+    expect(t2?.penalized_gws).toEqual([])
+  })
+
+  it("returns an empty penalized_gws array when no penalties have been applied", async () => {
+    const rows = [{ team_id: "t1", gameweek: 1, points: 30 }]
+    const result = await getStandings(makeSupabase([T1], rows))
+    expect(result[0].penalized_gws).toEqual([])
+  })
+})
+
+// ─── getGameweekHighlights ──────────────────────────────────────────────────
+
+function makeChain(data: unknown) {
+  const chain = Promise.resolve({ data }) as Promise<{ data: unknown }> & {
+    eq: () => ReturnType<typeof makeChain>
+    not: () => ReturnType<typeof makeChain>
+  }
+  chain.eq = () => makeChain(data)
+  chain.not = () => makeChain(data)
+  return chain
+}
+
+type PointRow = {
+  team_id: string
+  player_id: number
+  points: number
+  was_subbed_in: boolean
+  counted: boolean
+  is_captain: boolean
+  player: { web_name: string; first_name: string; second_name: string; fpl_team_short: string }
+}
+
+function makeHighlightsSupabase(
+  teams: { id: string; display_name: string; short_name: string; color: string }[],
+  pointRows: PointRow[],
+  penaltyRows: { team_id: string; points_penalty: number }[] = [],
+) {
+  return {
+    from: (table: string) => ({
+      select: () => {
+        if (table === "teams") return makeChain(teams)
+        if (table === "team_transfer_records") return makeChain(penaltyRows)
+        return makeChain(pointRows)
+      },
+    }),
+  }
+}
+
+function makePointRow(overrides: Partial<PointRow>): PointRow {
+  return {
+    team_id: "t1",
+    player_id: 1,
+    points: 5,
+    was_subbed_in: false,
+    counted: true,
+    is_captain: false,
+    player: { web_name: "Player", first_name: "First", second_name: "Last", fpl_team_short: "ARS" },
+    ...overrides,
+  }
+}
+
+describe("getGameweekHighlights", () => {
+  it("excludes an uncounted (subbed-out/unused bench) row from Player of the Week", async () => {
+    const rows = [
+      makePointRow({ player_id: 1, points: 20, counted: false, player: { web_name: "Bencher", first_name: "B", second_name: "Player", fpl_team_short: "LIV" } }),
+      makePointRow({ player_id: 2, points: 8, counted: true }),
+    ]
+    const result = await getGameweekHighlights(1, makeHighlightsSupabase([T1], rows))
+    expect(result.playerOfTheWeek?.web_name).toBe("Player")
+    expect(result.playerOfTheWeek?.points).toBe(8)
+  })
+
+  it("un-doubles a captain's points for Player of the Week", async () => {
+    const rows = [makePointRow({ points: 18, is_captain: true, counted: true })]
+    const result = await getGameweekHighlights(1, makeHighlightsSupabase([T1], rows))
+    expect(result.playerOfTheWeek?.points).toBe(9)
+  })
+
+  it("includes a team's applied drop penalty when determining Top Team", async () => {
+    const rows = [
+      makePointRow({ team_id: "t1", player_id: 1, points: 60, counted: true }),
+      makePointRow({ team_id: "t2", player_id: 2, points: 55, counted: true }),
+    ]
+    const penalties = [{ team_id: "t1", points_penalty: -8 }]
+    const result = await getGameweekHighlights(1, makeHighlightsSupabase([T1, T2], rows, penalties))
+    // t1: 60 - 8 = 52, t2: 55 -> t2 should win despite a lower raw total
+    expect(result.topTeam?.team_id).toBe("t2")
+    expect(result.topTeam?.points).toBe(55)
   })
 })

@@ -11,9 +11,59 @@ function createClient() {
   )
 }
 
+async function runCron() {
+  const bootstrap = await fetchFplBootstrap()
+  const currentEvent = bootstrap.events.find(e => e.is_current)
+
+  // Skip only if there's no active gameweek at all. Do NOT skip once it's
+  // finished — that final sync is what actually resolves auto-subs and the
+  // captain->VC fallback (syncGameweekPoints gates those on gwFinished), so
+  // skipping here would mean the finished/final state never gets written.
+  if (!currentEvent) {
+    return NextResponse.json({ skipped: true, reason: "No active gameweek" })
+  }
+
+  const gw = currentEvent.id
+  const supabase = createClient()
+
+  const [pointsResult, penaltyResult] = await Promise.all([
+    syncGameweekPoints(gw, supabase, { gwFinished: currentEvent.finished }),
+    applyDropPenalties(gw, supabase),
+  ])
+
+  // Purge chat messages older than 30 days
+  await supabase
+    .from("chat_messages")
+    .delete()
+    .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+
+  return NextResponse.json({ ok: true, gameweek: gw, ...pointsResult, ...penaltyResult })
+}
+
+/**
+ * GET /api/scoring/cron
+ * Vercel Cron issues GET requests and cannot attach custom headers — it
+ * auto-injects `Authorization: Bearer $CRON_SECRET` instead. Set CRON_SECRET
+ * in the Vercel project's env vars to the same value as SYNC_SECRET so this
+ * authenticates. (The POST handler below remains for manual/local triggers.)
+ */
+export async function GET(request: Request) {
+  const authHeader = request.headers.get("authorization")
+  if (!verifySyncSecret(authHeader)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+  try {
+    return await runCron()
+  } catch (err) {
+    console.error("[scoring/cron] error:", err)
+    const message = err instanceof Error ? err.message : JSON.stringify(err)
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
 /**
  * POST /api/scoring/cron
- * Called by Vercel cron every 30 minutes (see vercel.json).
+ * Manual/local trigger equivalent of the GET handler above.
  * Auto-detects the current gameweek and syncs points only if one is active.
  * Auth: Bearer SYNC_SECRET (same secret used for manual sync).
  */
@@ -22,31 +72,8 @@ export async function POST(request: Request) {
   if (!verifySyncSecret(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
-
   try {
-    const bootstrap = await fetchFplBootstrap()
-    const currentEvent = bootstrap.events.find(e => e.is_current)
-
-    // Skip if no active gameweek or it's already finished
-    if (!currentEvent || currentEvent.finished) {
-      return NextResponse.json({ skipped: true, reason: "No active gameweek" })
-    }
-
-    const gw = currentEvent.id
-    const supabase = createClient()
-
-    const [pointsResult, penaltyResult] = await Promise.all([
-      syncGameweekPoints(gw, supabase),
-      applyDropPenalties(gw, supabase),
-    ])
-
-    // Purge chat messages older than 30 days
-    await supabase
-      .from("chat_messages")
-      .delete()
-      .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-
-    return NextResponse.json({ ok: true, gameweek: gw, ...pointsResult, ...penaltyResult })
+    return await runCron()
   } catch (err) {
     console.error("[scoring/cron] error:", err)
     const message = err instanceof Error ? err.message : JSON.stringify(err)

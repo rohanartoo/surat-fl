@@ -59,8 +59,13 @@ export async function POST(request: NextRequest) {
 
   const trimmedName = guest_name.trim()
 
-  // Check against team names — case-insensitive + Unicode normalisation to block homograph spoofing
+  // Case-insensitive + Unicode normalisation, shared by both the reserved-name
+  // check and the kick check below — without it, a kicked "Bob" trivially
+  // re-enters as "bob", "BOB", or a homograph, since exact string equality
+  // treats each as a different name.
   const normalizeStr = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+  const normalizedName = normalizeStr(trimmedName)
+
   const { data: teams } = await supabase.from("teams").select("short_name, display_name")
   const reserved = new Set(
     (teams ?? [])
@@ -68,14 +73,16 @@ export async function POST(request: NextRequest) {
       .filter(Boolean)
       .map(n => normalizeStr(n!))
   )
-  if (reserved.has(normalizeStr(trimmedName))) {
+  if (reserved.has(normalizedName)) {
     return NextResponse.json({ error: "That name is reserved for a league team. Please choose a different name." }, { status: 400 })
   }
 
-  // Check kick list
-  const { data: kick } = await supabase
-    .from("chat_kicks").select("id").eq("guest_name", trimmedName).maybeSingle()
-  if (kick) {
+  // Check kick list — compare normalized against every kicked name rather
+  // than an exact-match `.eq()`, since chat_kicks stores the original
+  // (non-normalized) name that was kicked.
+  const { data: kicks } = await supabase.from("chat_kicks").select("guest_name")
+  const isKicked = (kicks ?? []).some(k => normalizeStr(k.guest_name) === normalizedName)
+  if (isKicked) {
     return NextResponse.json({ error: "You have been removed from chat." }, { status: 403 })
   }
 

@@ -58,7 +58,6 @@ export async function POST(request: NextRequest) {
   }
 
   let totalRows = 0
-  let totalPenaltyRows = 0
   for (const gameweek of gws) {
     // gameweek_points only has a partial unique index (player_id is not null),
     // which Postgres can't use as an ON CONFLICT inference target — so we
@@ -87,13 +86,16 @@ export async function POST(request: NextRequest) {
     const { error: insertErr } = await supabase.from("gameweek_points").insert(rows)
     if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
     totalRows += rows.length
-
-    // Mirrors the real scoring/sync and cron paths so a simulated GW behaves
-    // the same as production — applies any drop-quota penalty already
-    // recorded (via team_transfer_records) against an auction targeting this GW.
-    const { penaltyRows } = await applyDropPenalties(gameweek, supabase)
-    totalPenaltyRows += penaltyRows
   }
+
+  // Mirrors the real scoring/sync and cron paths so a simulated GW behaves
+  // the same as production — applies any drop-quota penalty already recorded
+  // (via team_transfer_records) to whichever GW is actually "next". Applied
+  // once, after the loop, against the highest GW simulated — NOT once per
+  // GW in the loop above, which would land every pending penalty on the
+  // first (lowest) GW simulated instead of the intended one.
+  const { penaltyRows } = await applyDropPenalties(Math.max(...gws), supabase)
+  const totalPenaltyRows = penaltyRows
 
   return NextResponse.json({ ok: true, gameweeks: gws, rows: totalRows, penaltyRows: totalPenaltyRows })
 }

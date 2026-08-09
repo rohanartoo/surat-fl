@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
-import { getNextBidder, isSoloWin, POSITION_ORDER } from "@/lib/auction-engine"
+import { getNextBidder, isSoloWin, POSITION_ORDER, validateBid } from "@/lib/auction-engine"
 import { lockAndCommitDrops, checkReDraftEligibility, freeDropsForType, getCarryoverForTeam } from "@/lib/drops"
 import { getCurrentAuction } from "@/lib/auctions"
 import type { Position, AuctionType } from "@/types"
@@ -154,7 +154,22 @@ async function handleStart(request: NextRequest) {
   const order = (auction.auction_order as string[]) ?? []
   if (order.length === 0) return err("Auction order has not been set. Set the order before starting.")
 
-  // Capture pre-auction snapshot for rollback support
+  // Atomically claim the pending->active transition first — the update only
+  // matches a row if the auction is still "pending", so two concurrent Start
+  // requests can't both proceed past this point and persist a snapshot that
+  // reflects one request's mid-flight (possibly post-lock) state.
+  const { data: claimed, error: claimErr } = await supabase
+    .from("auctions")
+    .update({ status: "active", started_at: new Date().toISOString() })
+    .eq("id", auction_id)
+    .eq("status", "pending")
+    .select("id")
+  if (claimErr) return err(claimErr.message, 500)
+  if (!claimed || claimed.length === 0) return err("Auction is not in pending state.")
+
+  // Capture pre-auction snapshot for rollback support. Safe to do after the
+  // claim above — flipping auctions.status doesn't touch teams/roster_entries/
+  // players/team_drops, so this still reflects the true pre-lock state.
   const [{ data: teamBudgets }, { data: rosterEntries }, { data: stagedDrops }] = await Promise.all([
     supabase.from("teams").select("id, budget"),
     supabase.from("roster_entries").select("id, team_id, player_id, slot_type, bench_order, is_captain, is_vice_captain, base_price"),
@@ -177,21 +192,24 @@ async function handleStart(request: NextRequest) {
     },
   }, { onConflict: "auction_id" })
 
+  // Tracks whether lockAndCommitDrops actually ran and committed — once it
+  // has, budgets/roster/base_prices are already mutated and the snapshot is
+  // the ONLY way back. Deleting it after that point (as the old code did
+  // unconditionally) would strand that state permanently, with the auction
+  // stuck "pending" while the drop credit and roster removal already happened.
+  let dropsLocked = false
   try {
-    // For non-initial auctions, lock all staged drops before going active
+    // For non-initial auctions, lock all staged drops now that we're active
     if (auction.type !== "initial") {
       await lockAndCommitDrops(auction_id, supabase)
+      dropsLocked = true
     }
-
-    const { error } = await supabase
-      .from("auctions")
-      .update({ status: "active", started_at: new Date().toISOString() })
-      .eq("id", auction_id)
-
-    if (error) throw new Error(error.message)
   } catch (e) {
-    // Clean up dangling snapshot if activation failed
-    await supabase.from("auction_snapshots").delete().eq("auction_id", auction_id)
+    if (!dropsLocked) {
+      // Nothing was committed — safe to fully revert, including the snapshot.
+      await supabase.from("auctions").update({ status: "pending", started_at: null }).eq("id", auction_id)
+      await supabase.from("auction_snapshots").delete().eq("auction_id", auction_id)
+    }
     throw e
   }
 
@@ -525,16 +543,35 @@ async function handleStartBidding(request: NextRequest) {
     return NextResponse.json({ concluded: true, reason: "no_interest" })
   }
 
-  // Single interested team wins at base_price — skip bidding round
+  // Single interested team wins at base_price — skip bidding round. Still
+  // has to pass the same affordability/max-bid check a normal bid would
+  // (rpc_place_bid enforces this server-side for every other path) — without
+  // it, a team with too little budget for its remaining empty slots could
+  // "win" a player it can't actually afford to keep the rest of its squad
+  // fundable, permanently blocking end-of-draft for the whole league.
   if (isSoloWin(interested)) {
     const player = lot.player as unknown as { base_price: number }
+    const soloTeamId = interested[0]
+    const [{ data: soloTeam }, { count: filledSlots }] = await Promise.all([
+      supabase.from("teams").select("budget, display_name").eq("id", soloTeamId).single(),
+      supabase.from("roster_entries").select("id", { count: "exact", head: true })
+        .eq("team_id", soloTeamId).in("slot_type", ["starting", "bench"]),
+    ])
+    const emptySlots = SQUAD_RULES.total - (filledSlots ?? 0)
+    const validationError = soloTeam
+      ? validateBid(player.base_price, null, player.base_price, soloTeam.budget, emptySlots)
+      : { code: "EXCEEDS_MAX" as const, message: "Team not found." }
+    if (validationError) {
+      return err(`${soloTeam?.display_name ?? "That team"} cannot afford this player: ${validationError.message}`)
+    }
+
     await supabase.from("auction_lots").update({
       phase: "bidding",
       current_bid: player.base_price,
-      current_bidder_id: interested[0],
+      current_bidder_id: soloTeamId,
       current_turn_team_id: null,
     }).eq("id", lot_id)
-    return NextResponse.json({ solo_win: true, winner_id: interested[0], winning_bid: player.base_price })
+    return NextResponse.json({ solo_win: true, winner_id: soloTeamId, winning_bid: player.base_price })
   }
 
   // Ensure every interested team has a bid row
