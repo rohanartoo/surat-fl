@@ -4,6 +4,7 @@ import { requireRole, getProfile } from "@/lib/roles"
 import { getNextBidder, isSoloWin, POSITION_ORDER, validateBid, validateFormation } from "@/lib/auction-engine"
 import { lockAndCommitDrops, checkReDraftEligibility, freeDropsForType, getCarryoverForTeam } from "@/lib/drops"
 import { getCurrentAuction } from "@/lib/auctions"
+import { getStandings } from "@/lib/scoring"
 import type { Position, AuctionType } from "@/types"
 import { SQUAD_RULES, AUCTION_TIMER_SECONDS, DROP_RULES } from "@/types"
 
@@ -78,11 +79,18 @@ async function handleCreate(request: NextRequest) {
 
   const freeTransfers = type === "initial" || type === "post_jan" || type === "post_summer" ? 3 : 2
 
-  // Seed auction_order from teams.auction_order field
-  const { data: teams } = await supabase
-    .from("teams").select("id, auction_order").order("auction_order")
-
-  const auctionOrder = (teams ?? []).map(t => t.id)
+  // Seed auction_order: initial auction uses the static preseason
+  // teams.auction_order column (no standings exist yet); every other
+  // auction type defaults to the current league standings order.
+  let auctionOrder: string[]
+  if (type === "initial") {
+    const { data: teams } = await supabase
+      .from("teams").select("id, auction_order").order("auction_order")
+    auctionOrder = (teams ?? []).map(t => t.id)
+  } else {
+    const standings = await getStandings(supabase)
+    auctionOrder = standings.map(s => s.team_id)
+  }
 
   const { data: auction, error } = await supabase
     .from("auctions")
