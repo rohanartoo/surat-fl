@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getProfile } from "@/lib/roles"
 import { AuctionProvider } from "@/components/auction/AuctionProvider"
 import { AuctionMasterControls } from "@/components/auction/AuctionMasterControls"
+import { AuctionBanner } from "@/components/auction/AuctionBanner"
 import { CentralConsole } from "@/components/auction/CentralConsole"
 import { TeamBidConsole, MyActionPanel } from "@/components/auction/TeamBidConsole"
 import { PlayerSelectionPanel } from "@/components/auction/PlayerSelectionPanel"
@@ -182,6 +183,8 @@ export default async function AuctionPage() {
             {isLive ? "Live" : auction?.status === "pending" ? "Pending" : "No active auction"}
           </Badge>
         </div>
+
+        <AuctionBanner />
 
         {/* Main layout: 3 columns on large screens */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px_280px] gap-6 items-start">

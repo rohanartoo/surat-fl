@@ -6,6 +6,7 @@ import {
   getMaxBid,
   getNextBidder,
   getNextBidStartIndex,
+  turnsUntilTeamBids,
   chooseSlotType,
   validateFormation,
   validateFormationCaps,
@@ -168,6 +169,37 @@ describe("getNextBidStartIndex", () => {
   it("skips the current team and finds the next one", () => {
     const open = new Set(["C", "D"])
     expect(getNextBidStartIndex(order, 1, open)).toBe(2) // skips B, finds C
+  })
+})
+
+// ─── turnsUntilTeamBids ────────────────────────────────────────────────────────
+
+describe("turnsUntilTeamBids", () => {
+  const order = ["A", "B", "C", "D"]
+
+  it("returns 0 when it's already the team's turn", () => {
+    const eligible = new Set(["A", "B", "C", "D"])
+    expect(turnsUntilTeamBids(order, "A", eligible, "A")).toBe(0)
+  })
+  it("counts eligible teams ahead in rotation", () => {
+    const eligible = new Set(["A", "B", "C", "D"])
+    expect(turnsUntilTeamBids(order, "A", eligible, "C")).toBe(2)
+  })
+  it("skips folded/ineligible teams when counting", () => {
+    const eligible = new Set(["A", "C"]) // B folded
+    expect(turnsUntilTeamBids(order, "A", eligible, "C")).toBe(1)
+  })
+  it("returns null when the team has folded (not eligible)", () => {
+    const eligible = new Set(["A", "C", "D"]) // B folded
+    expect(turnsUntilTeamBids(order, "A", eligible, "B")).toBeNull()
+  })
+  it("returns null when there's no current turn team", () => {
+    const eligible = new Set(["A", "B"])
+    expect(turnsUntilTeamBids(order, null, eligible, "A")).toBeNull()
+  })
+  it("wraps around the end of the array", () => {
+    const eligible = new Set(["A", "D"])
+    expect(turnsUntilTeamBids(order, "D", eligible, "A")).toBe(1)
   })
 })
 

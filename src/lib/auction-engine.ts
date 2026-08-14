@@ -190,6 +190,36 @@ export function getNextBidStartIndex(
   return currentIndex
 }
 
+/**
+ * How many bidding turns away a team is from being up next in the current
+ * lot's rotation, counting only teams still eligible (not folded/skipped).
+ * Returns 0 if it's already their turn, null if they're not in the running
+ * at all (folded, or never got a turn this lot).
+ *
+ * @param auctionOrder      - Full ordered array of team IDs for this auction
+ * @param currentTurnTeamId - auction_lots.current_turn_team_id
+ * @param eligibleIds       - Teams still active in this bidding round
+ * @param teamId            - The team to compute the distance for
+ */
+export function turnsUntilTeamBids(
+  auctionOrder: string[],
+  currentTurnTeamId: string | null,
+  eligibleIds: Set<string>,
+  teamId: string
+): number | null {
+  if (!currentTurnTeamId || !eligibleIds.has(teamId)) return null
+  if (teamId === currentTurnTeamId) return 0
+
+  let searchIndex = auctionOrder.indexOf(currentTurnTeamId) + 1
+  for (let count = 1; count <= auctionOrder.length; count++) {
+    const next = getNextBidder(auctionOrder, searchIndex, eligibleIds)
+    if (!next) return null
+    if (next.teamId === teamId) return count
+    searchIndex = next.index + 1
+  }
+  return null
+}
+
 // =============================================
 // POSITION CATEGORY PROGRESSION
 // =============================================
