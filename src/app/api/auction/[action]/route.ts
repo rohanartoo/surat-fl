@@ -855,7 +855,7 @@ async function handleAdvancePosition(request: NextRequest) {
 
   const { error } = await supabase
     .from("auctions")
-    .update({ current_position_category: nextPos, current_bidder_index: 0 })
+    .update({ current_position_category: nextPos })
     .eq("id", auction_id)
   if (error) return err(error.message)
 
