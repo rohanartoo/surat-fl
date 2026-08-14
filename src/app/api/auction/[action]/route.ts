@@ -29,6 +29,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       case "create":           return await handleCreate(request)
       case "start":            return await handleStart(request)
       case "set-order":        return await handleSetOrder(request)
+      case "set-next-bidder":  return await handleSetNextBidder(request)
       case "open-lot":         return await handleOpenLot(request)
       case "declare-interest": return await handleDeclareInterest(request)
       case "start-bidding":    return await handleStartBidding(request)
@@ -134,6 +135,41 @@ async function handleSetOrder(request: NextRequest) {
     success: true,
     ...(omittedCount > 0 && { warning: `${omittedCount} team(s) not included in this auction order.` }),
   })
+}
+
+// ─────────────────────────────────────────────
+// SET-NEXT-BIDDER
+// Manual AM override of whose turn it is to nominate next — bypasses the
+// normal open-slot skip logic in rpc_advance_bidder for edge cases it
+// doesn't handle correctly.
+// Body: { auction_id, team_id }
+// ─────────────────────────────────────────────
+async function handleSetNextBidder(request: NextRequest) {
+  await requireRole("auction_master")
+  const supabase = createClient()
+  const { auction_id, team_id } = await request.json()
+
+  if (!auction_id || !team_id) return err("auction_id and team_id required.")
+
+  const { data: auction } = await supabase
+    .from("auctions").select("status, auction_order").eq("id", auction_id).single()
+  if (!auction) return err("Auction not found.", 404)
+  if (auction.status !== "active") return err("Next bidder can only be set while the auction is active.")
+
+  const { data: openLot } = await supabase
+    .from("auction_lots").select("id")
+    .eq("auction_id", auction_id).in("phase", ["interest", "bidding"]).maybeSingle()
+  if (openLot) return err("Cannot change the next bidder while a lot is open.")
+
+  const order = (auction.auction_order as string[]) ?? []
+  const index = order.indexOf(team_id)
+  if (index === -1) return err("Team is not part of this auction's order.")
+
+  const { error } = await supabase
+    .from("auctions").update({ current_bidder_index: index }).eq("id", auction_id)
+  if (error) return err(error.message)
+
+  return NextResponse.json({ success: true })
 }
 
 // ─────────────────────────────────────────────

@@ -23,6 +23,7 @@ export function AuctionMasterControls() {
   const [cancelLoading, setCancelLoading] = useState(false)
   const [confirmEndDraft, setConfirmEndDraft] = useState(false)
   const [localOrder, setLocalOrder] = useState<string[] | null>(null)
+  const [changingBidder, setChangingBidder] = useState(false)
   const [excludedTeamIds, setExcludedTeamIds] = useState<string[]>([])
   const [completedTypes, setCompletedTypes] = useState<Set<string>>(new Set())
 
@@ -333,6 +334,9 @@ export function AuctionMasterControls() {
     const allParticipantsFull = participatingTeams.length > 0 && participatingTeams.every(
       t => (filledSlotsByTeam[t.id]?.[currentPos] ?? 0) >= maxSlotsForPos
     )
+    const auctionOrderIds = (auction.auction_order as string[] | null) ?? []
+    const nextBidderId = auctionOrderIds[auction.current_bidder_index] ?? null
+    const nextBidderTeam = teams.find(t => t.id === nextBidderId) ?? null
 
     return (
       <AMCard title="Auction Master" resetSection={resetSection}>
@@ -342,6 +346,56 @@ export function AuctionMasterControls() {
             <span className="text-foreground font-medium">{currentPos}</span>
           </p>
         </div>
+
+        {nextBidderTeam && (
+          <div className="mb-3">
+            {!changingBidder ? (
+              <p className="text-sm text-muted-foreground flex items-center gap-2">
+                Up next:{" "}
+                <span className="inline-flex items-center gap-1.5 text-foreground font-medium">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: nextBidderTeam.color }} />
+                  {nextBidderTeam.short_name}
+                </span>
+                <button
+                  className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 ml-auto"
+                  onClick={() => setChangingBidder(true)}
+                >
+                  Change
+                </button>
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Set next to nominate</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {participatingTeams.map(team => (
+                    <button
+                      key={team.id}
+                      disabled={loading}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs border ${
+                        team.id === nextBidderId
+                          ? "border-amber-500/50 bg-amber-500/10 text-foreground"
+                          : "border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/40"
+                      }`}
+                      onClick={async () => {
+                        setChangingBidder(false)
+                        await post("set-next-bidder", { auction_id: auction.id, team_id: team.id })
+                      }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
+                      {team.short_name}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+                  onClick={() => setChangingBidder(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {allParticipantsFull && nextPos ? (
           <div className="rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2.5 space-y-2 mb-3">
