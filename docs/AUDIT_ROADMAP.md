@@ -13,7 +13,7 @@ first.
 
 ---
 
-## Phase 1 — Close out the known Medium/Low findings
+## Phase 1 — Close out the known Medium/Low findings ✅ Done (2026-08-09)
 
 Already identified and verified during the 2026-08-08 audit; just not fixed because
 that pass was scoped to Critical + High only. No new investigation needed, just
@@ -57,31 +57,58 @@ implementation.
 
 ---
 
-## Phase 2 — Route-handler test coverage
+## Phase 2 — Route-handler test coverage 🔶 Slice 1 done (2026-08-09), slice 2 open
 
-Today's test suite (101 tests) covers pure functions in `src/lib/` almost
+Before this: the test suite covered pure functions in `src/lib/` almost
 entirely — `scoring.ts`, `auction-engine.ts`, `drops.ts`. The API route handlers
 in `src/app/api/**/route.ts` (the actual request/response logic, auth checks,
-RPC wiring) have **zero** automated coverage — every verification of a route
+RPC wiring) had **zero** automated coverage — every verification of a route
 handler this session was done manually via live Playwright + `docker exec psql`,
 which doesn't persist as a regression guard.
 
-Steps:
-1. Decide the testing approach: mocked-Supabase unit tests (fast, matches the
-   existing `makeSupabase`-style pattern in `scoring.test.ts`) vs. real
-   integration tests against the local Supabase stack (slower, catches RLS/RPC
-   issues mocks can't). Likely both — unit tests for validation/branching logic,
-   a smaller set of integration tests for the RPC-backed critical paths
-   (`rpc_place_bid`, `rpc_lock_and_credit_drops`, the new drop-staging RPCs, etc).
-2. Prioritize by risk: auction bidding/assignment, drop staging, loan transfers,
-   admin reset — the handlers that mutate money/roster state — before read-only
-   or low-stakes routes (chat, settings).
-3. Wire the integration-test subset into CI as a separate job (needs a Supabase
-   service running in the runner — `supabase start` in GH Actions, or a
-   docker-compose service).
+**Slice 1 (done)** — built the shared mock harness and covered the handlers most
+recently touched by real bugs:
+- `src/app/api/__tests__/route-test-helpers.ts` — a reusable `createMockSupabase()`
+  fake extending the `makeQueryChain`/`makeSupabase` pattern already established in
+  `scoring.test.ts` with `.single()`/`.maybeSingle()`/`.insert()`/`.update()`/
+  `.delete()`/`.upsert()`/`.rpc()` (with call recording) and count-mode selects.
+  Data is keyed by table name; a table queried multiple times per handler with
+  different expected shapes can be given an array of responses, consumed in call
+  order. `vi.mock("@supabase/supabase-js")` + `vi.mock("@/lib/roles")` intercept
+  the route's own `createClient()`/`requireRole`/`assertOwnership`/`getProfile` —
+  no real Next.js request context or cookies needed. Tests call the real exported
+  `POST`/`GET` handlers with a constructed `NextRequest`, so the actual dispatch +
+  error-wrapping code is exercised, not extracted logic.
+- `team-route.test.ts` — `handleSetCaptain` (captain/VC mutual-exclusivity
+  regression guard), `handleSwap` (formation-cap rejection, `rpc_swap_roster_entry`
+  call args, RPC error propagation).
+- `auction-route.test.ts` — `handleCancel` (`rpc_cancel_auction` wiring/error
+  propagation), `handleStartBidding` (no-interest, solo-win affordable/unaffordable
+  — regression guard for the solo-win budget fix, multi-team bidding start).
+- `loan-transfers-route.test.ts` — every validation branch (missing fields,
+  self-trade, cash validation, ownership, active-roster check, position mismatch,
+  team-not-found, club-cap, budget) plus a full happy path reaching
+  `rpc_execute_loan_transfer` with the expected args.
+- 138 total tests (101 → 138), all passing in CI.
 
-**Effort**: medium-large — this is the single biggest gap and probably the most
-valuable phase after Phase 1, but it's genuinely multi-session work.
+**Slice 2 (open)** — same pattern, next handlers by the original risk ranking:
+`handleMarkDrop`/`handleReturnFromDrop` (deferred from slice 1 — the fullest
+orchestration of any handler: `getCurrentAuction` + `getCarryoverForTeam` +
+`getDropQuota` + `repairTeamCaptaincy` all compose in one call, each hitting
+`roster_entries`/`auctions`/`team_drops` with different shapes — needs a careful
+call-order map like `loan-transfers`'s happy-path test, just longer),
+`handleEndDraft`, `handleOpenLot` (most complex single handler — initial-auction
+auto-enroll branching, redraft bans, club/position caps), `handlePlaceBid`/
+`handleFold` (thin RPC wrappers — lower marginal value, logic lives in SQL),
+`handleAssignPlayer`, `handleUndoLastAssignment`, `handleFullWipe`. Also
+still open: an actual **integration-test subset** against the real local Supabase
+stack (`supabase start` in CI) for the RPC-backed critical paths themselves
+(`rpc_place_bid`, `rpc_lock_and_credit_drops`, the drop-staging RPCs) — the mock
+harness verifies a handler calls an RPC with the right arguments, not that the
+RPC's own SQL is correct; that's still only covered by manual/live verification.
+
+**Effort**: slice 1 was ~1 session. Slice 2 (remaining handlers + real integration
+tests) is still genuinely multi-session work.
 
 ---
 
