@@ -26,6 +26,9 @@ export function AuctionMasterControls() {
   const [changingBidder, setChangingBidder] = useState(false)
   const [excludedTeamIds, setExcludedTeamIds] = useState<string[]>([])
   const [completedTypes, setCompletedTypes] = useState<Set<string>>(new Set())
+  const [syncLoading, setSyncLoading] = useState(false)
+  const [syncResult, setSyncResult] = useState<string | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
 
   useEffect(() => {
     if (auction) return
@@ -85,6 +88,21 @@ export function AuctionMasterControls() {
       window.location.href = "/auction"
     } finally {
       setCancelLoading(false)
+    }
+  }
+
+  async function handleSyncFpl() {
+    setSyncLoading(true)
+    setSyncError(null)
+    setSyncResult(null)
+    try {
+      const res = await fetch("/api/admin/sync-fpl", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok) { setSyncError(data.error ?? "Sync failed."); return }
+      setSyncResult(`Synced ${data.synced} players${data.pruned > 0 ? ` (${data.pruned} pruned)` : ""}.`)
+      await refresh()
+    } finally {
+      setSyncLoading(false)
     }
   }
 
@@ -206,6 +224,24 @@ export function AuctionMasterControls() {
             )
           })}
         </div>
+
+        <Separator className="my-3" />
+
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Player data</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full"
+            disabled={syncLoading}
+            onClick={handleSyncFpl}
+          >
+            {syncLoading ? "Syncing…" : "Sync FPL data now"}
+          </Button>
+          {syncResult && <p className="text-xs text-emerald-500">{syncResult}</p>}
+          {syncError && <p className="text-xs text-destructive">{syncError}</p>}
+        </div>
+
         {error && <p className="text-xs text-destructive mt-2">{error}</p>}
       </AMCard>
     )

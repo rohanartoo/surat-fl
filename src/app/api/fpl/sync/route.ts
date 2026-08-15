@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient as createSupabaseClient } from "@supabase/supabase-js"
-import { fetchFplBootstrap, mapFplPlayer } from "@/lib/fpl"
+import { syncFplPlayers } from "@/lib/fpl"
 import { verifySyncSecret } from "@/lib/auth"
 
 export async function POST(request: Request) {
@@ -10,50 +10,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const bootstrap = await fetchFplBootstrap()
     const supabase = createSupabaseClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
-
-    const teamMap = bootstrap.teams.reduce<Record<number, { name: string; short_name: string }>>(
-      (acc, t) => { acc[t.id] = { name: t.name, short_name: t.short_name }; return acc },
-      {}
-    )
-
-    const players = bootstrap.elements.map((p) => mapFplPlayer(p, teamMap))
-
-    // Upsert in batches of 500
-    const batchSize = 500
-    for (let i = 0; i < players.length; i += batchSize) {
-      const batch = players.slice(i, i + batchSize)
-      const { error } = await supabase
-        .from("players")
-        .upsert(batch, { onConflict: "id" })
-
-      if (error) {
-        console.error("[fpl/sync] upsert error:", JSON.stringify(error))
-        throw error
-      }
-    }
-
-    // Remove any player no longer in FPL's feed (reissued element ids,
-    // relegated/departed clubs) — see 20260726000001_prune_stale_players.sql.
-    // Never touches a player with any roster/auction/drop/scoring history.
-    const currentIds = players.map((p) => p.id)
-    const { data: pruneResult, error: pruneErr } = await supabase
-      .rpc("rpc_prune_stale_players", { p_current_ids: currentIds })
-      .single()
-    if (pruneErr) {
-      console.error("[fpl/sync] prune error:", JSON.stringify(pruneErr))
-      throw pruneErr
-    }
-
-    return NextResponse.json({
-      synced: players.length,
-      pruned: (pruneResult as { pruned: number }).pruned,
-      ok: true,
-    })
+    const { synced, pruned } = await syncFplPlayers(supabase)
+    return NextResponse.json({ synced, pruned, ok: true })
   } catch (err) {
     console.error("[fpl/sync] error:", err)
     const message = err instanceof Error

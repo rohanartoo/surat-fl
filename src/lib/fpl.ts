@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
 import type { FplBootstrap, FplPlayer } from "@/types"
 import { positionLabel } from "@/lib/utils"
 
@@ -81,4 +82,46 @@ export function mapFplPlayer(player: FplPlayer, teamMap: Record<number, { name: 
     news: player.news,
     updated_at: new Date().toISOString(),
   }
+}
+
+/**
+ * Fetches the current FPL bootstrap data and upserts every player (points,
+ * selected_by_percent, status/news, etc. — never base_price, see
+ * mapFplPlayer's comment), then prunes any player no longer in FPL's feed.
+ * Shared by the cron-triggered /api/fpl/sync route and the AM/admin-triggered
+ * manual sync action, so both paths do exactly the same work.
+ */
+export async function syncFplPlayers(supabase: SupabaseClient): Promise<{ synced: number; pruned: number }> {
+  const bootstrap = await fetchFplBootstrap()
+
+  const teamMap = bootstrap.teams.reduce<Record<number, { name: string; short_name: string }>>(
+    (acc, t) => { acc[t.id] = { name: t.name, short_name: t.short_name }; return acc },
+    {}
+  )
+
+  const players = bootstrap.elements.map((p) => mapFplPlayer(p, teamMap))
+
+  const batchSize = 500
+  for (let i = 0; i < players.length; i += batchSize) {
+    const batch = players.slice(i, i + batchSize)
+    const { error } = await supabase.from("players").upsert(batch, { onConflict: "id" })
+    if (error) {
+      console.error("[syncFplPlayers] upsert error:", JSON.stringify(error))
+      throw error
+    }
+  }
+
+  // Remove any player no longer in FPL's feed (reissued element ids,
+  // relegated/departed clubs) — see 20260726000001_prune_stale_players.sql.
+  // Never touches a player with any roster/auction/drop/scoring history.
+  const currentIds = players.map((p) => p.id)
+  const { data: pruneResult, error: pruneErr } = await supabase
+    .rpc("rpc_prune_stale_players", { p_current_ids: currentIds })
+    .single()
+  if (pruneErr) {
+    console.error("[syncFplPlayers] prune error:", JSON.stringify(pruneErr))
+    throw pruneErr
+  }
+
+  return { synced: players.length, pruned: (pruneResult as { pruned: number }).pruned }
 }
