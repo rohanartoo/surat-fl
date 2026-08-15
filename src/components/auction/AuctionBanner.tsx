@@ -59,7 +59,7 @@ export function AuctionBanner() {
       emphasis = "interest"
       headline = (
         <>
-          <PositionBadge position={player.position} className="w-auto px-1.5 mr-1.5" />
+          <PositionBadge position={player.position} className="w-auto px-1.5 mr-1.5 align-middle" />
           {player.web_name} — deciding who&apos;s in.
         </>
       )
@@ -73,7 +73,7 @@ export function AuctionBanner() {
         emphasis = "bidding"
         headline = (
           <>
-            <PositionBadge position={player.position} className="w-auto px-1.5 mr-1.5" />
+            <PositionBadge position={player.position} className="w-auto px-1.5 mr-1.5 align-middle" />
             {player.web_name} — bidding open, awaiting opening bid
             {firstBidder ? ` from ${firstBidder.short_name}` : ""}.
           </>
@@ -82,7 +82,7 @@ export function AuctionBanner() {
         emphasis = "bidding"
         headline = (
           <>
-            <PositionBadge position={player.position} className="w-auto px-1.5 mr-1.5" />
+            <PositionBadge position={player.position} className="w-auto px-1.5 mr-1.5 align-middle" />
             {isMe ? "You're" : `${leader.short_name} is`} leading the bid for{" "}
             <span className="font-semibold text-foreground">{player.web_name}</span> at{" "}
             <span className="font-mono font-semibold text-emerald-500">{formatMoney(current_bid)}</span>.
@@ -121,8 +121,11 @@ export function AuctionBanner() {
         emphasis === "idle" && "border-border/60",
       )}
     >
-      {/* div, not p: headline can contain PositionBadge, which renders a div — invalid inside a p */}
-      <div className="text-sm flex items-center flex-wrap">{headline}</div>
+      {/* div, not p: headline can contain PositionBadge, which renders a div — invalid inside a p.
+          Not flex, either: a flex container collapses whitespace-only text nodes between inline
+          children (the " " between a <span> and surrounding text), which silently ate the spaces
+          around player-name/amount spans below. Plain inline flow doesn't have that problem. */}
+      <div className="text-sm">{headline}</div>
       {subline && (
         <p className={cn(
           "text-sm font-medium shrink-0",
