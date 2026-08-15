@@ -28,6 +28,7 @@ export function AuctionMasterControls() {
   const [completedTypes, setCompletedTypes] = useState<Set<string>>(new Set())
   const [syncLoading, setSyncLoading] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
+  const [syncWarning, setSyncWarning] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -95,11 +96,13 @@ export function AuctionMasterControls() {
     setSyncLoading(true)
     setSyncError(null)
     setSyncResult(null)
+    setSyncWarning(null)
     try {
       const res = await fetch("/api/admin/sync-fpl", { method: "POST" })
       const data = await res.json()
       if (!res.ok) { setSyncError(data.error ?? "Sync failed."); return }
       setSyncResult(`Synced ${data.synced} players${data.pruned > 0 ? ` (${data.pruned} pruned)` : ""}.`)
+      if (data.warning) setSyncWarning(data.warning)
       await refresh()
     } finally {
       setSyncLoading(false)
@@ -238,7 +241,10 @@ export function AuctionMasterControls() {
           >
             {syncLoading ? "Syncing…" : "Sync FPL data now"}
           </Button>
-          {syncResult && <p className="text-xs text-emerald-500">{syncResult}</p>}
+          {syncResult && (
+            <p className={`text-xs ${syncWarning ? "text-amber-500" : "text-emerald-500"}`}>{syncResult}</p>
+          )}
+          {syncWarning && <p className="text-xs text-amber-500">{syncWarning}</p>}
           {syncError && <p className="text-xs text-destructive">{syncError}</p>}
         </div>
 

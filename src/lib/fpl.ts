@@ -84,14 +84,34 @@ export function mapFplPlayer(player: FplPlayer, teamMap: Record<number, { name: 
   }
 }
 
+// rpc_prune_stale_players only protects a player from deletion if it has
+// roster/auction/drop/scoring history — pre-auction, nobody has any of
+// that, so a single incomplete/truncated FPL fetch (rate limit, network
+// hiccup — anything short of an outright HTTP error, which is all
+// fetchFplBootstrap checks for) would otherwise delete real players it
+// just didn't happen to see this time, with nothing to stop it. Skip
+// pruning if the new sync is suspiciously smaller than what's already
+// stored, rather than trusting a single fetch unconditionally.
+const PRUNE_SAFETY_THRESHOLD = 0.9
+
 /**
  * Fetches the current FPL bootstrap data and upserts every player (points,
  * selected_by_percent, status/news, etc. — never base_price, see
- * mapFplPlayer's comment), then prunes any player no longer in FPL's feed.
+ * mapFplPlayer's comment), then prunes any player no longer in FPL's feed
+ * (unless the sync looks anomalously incomplete — see PRUNE_SAFETY_THRESHOLD).
  * Shared by the cron-triggered /api/fpl/sync route and the AM/admin-triggered
  * manual sync action, so both paths do exactly the same work.
  */
-export async function syncFplPlayers(supabase: SupabaseClient): Promise<{ synced: number; pruned: number }> {
+export async function syncFplPlayers(supabase: SupabaseClient): Promise<{
+  synced: number
+  pruned: number
+  pruneSkipped?: boolean
+  warning?: string
+}> {
+  const { count: beforeCount } = await supabase
+    .from("players")
+    .select("id", { count: "exact", head: true })
+
   const bootstrap = await fetchFplBootstrap()
 
   const teamMap = bootstrap.teams.reduce<Record<number, { name: string; short_name: string }>>(
@@ -109,6 +129,12 @@ export async function syncFplPlayers(supabase: SupabaseClient): Promise<{ synced
       console.error("[syncFplPlayers] upsert error:", JSON.stringify(error))
       throw error
     }
+  }
+
+  if (beforeCount !== null && beforeCount > 50 && players.length < beforeCount * PRUNE_SAFETY_THRESHOLD) {
+    const warning = `Sync returned ${players.length} players, well below the ${beforeCount} already stored. Skipped removing any players this time to avoid deleting real ones — try syncing again, and only investigate further if it stays low.`
+    console.warn("[syncFplPlayers]", warning)
+    return { synced: players.length, pruned: 0, pruneSkipped: true, warning }
   }
 
   // Remove any player no longer in FPL's feed (reissued element ids,

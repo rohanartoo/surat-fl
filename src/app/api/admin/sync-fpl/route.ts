@@ -22,8 +22,8 @@ export async function POST() {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
-    const { synced, pruned } = await syncFplPlayers(supabase)
-    return NextResponse.json({ synced, pruned, ok: true })
+    const result = await syncFplPlayers(supabase)
+    return NextResponse.json({ ...result, ok: true })
   } catch (err) {
     console.error("[admin/sync-fpl] error:", err)
     const message = err instanceof Error ? err.message : "Internal server error."
