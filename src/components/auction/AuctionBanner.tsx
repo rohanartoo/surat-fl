@@ -7,8 +7,6 @@ import { PositionBadge } from "@/components/ui/PositionBadge"
 import { formatMoney, cn } from "@/lib/utils"
 import { turnsUntilTeamBids } from "@/lib/auction-engine"
 
-const NORMAL_TITLE = "Surat FL"
-
 // "At a glance" summary for a team's own Auction tab: current player, who's
 // leading the bid and for how much, and how many turns away the viewer is
 // from bidding — consolidated from CentralConsole/TeamBidConsole, which
@@ -20,16 +18,28 @@ export function AuctionBanner() {
     currentLot &&
     currentLot.phase === "bidding" &&
     myTeamId &&
-    currentLot.current_turn_team_id === myTeamId
+    currentLot.current_turn_team_id === myTeamId &&
+    !bids.find(b => b.team_id === myTeamId)?.is_folded
   )
 
+  // Setting document.title directly gets silently reverted the next time
+  // React reconciles the root layout's own <title> (rendered from Next's
+  // metadata, and present on every route render) — that reconciliation
+  // always wins because it's earlier in DOM order, which is what
+  // `document.title` actually reflects per the HTML spec. Re-asserting on
+  // an interval while it's genuinely our turn is what survives that.
   useEffect(() => {
-    if (isMyTurn) {
-      document.title = "🔔 Your turn — " + NORMAL_TITLE
-    } else {
-      document.title = NORMAL_TITLE
+    if (!isMyTurn) return
+    const original = document.title
+    const desired = "🔔 Your turn — " + original.replace(/^🔔 Your turn — /, "")
+    document.title = desired
+    const id = setInterval(() => {
+      if (document.title !== desired) document.title = desired
+    }, 500)
+    return () => {
+      clearInterval(id)
+      document.title = original.replace(/^🔔 Your turn — /, "")
     }
-    return () => { document.title = NORMAL_TITLE }
   }, [isMyTurn])
 
   if (myRole !== "team" || !myTeamId) return null
@@ -111,7 +121,8 @@ export function AuctionBanner() {
         emphasis === "idle" && "border-border/60",
       )}
     >
-      <p className="text-sm flex items-center flex-wrap">{headline}</p>
+      {/* div, not p: headline can contain PositionBadge, which renders a div — invalid inside a p */}
+      <div className="text-sm flex items-center flex-wrap">{headline}</div>
       {subline && (
         <p className={cn(
           "text-sm font-medium shrink-0",
