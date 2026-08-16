@@ -78,14 +78,19 @@ async function handleSwap(request: NextRequest) {
     posById[r.id] = (r.player as unknown as { position: Position }).position
   }
 
-  // Simulate what starting XI would look like after the swap
+  // Simulate what starting XI would look like after the swap. entry_id ends
+  // up in target_slot; displaced_entry_id (if any) ends up in entry's OLD
+  // slot — which is only "starting" for a genuine cross-section swap. A
+  // same-section reorder (e.g. dragging one bench player over another to
+  // change sub priority) must leave startingIds untouched, or it phantom-
+  // adds the displaced bench player into the simulated XI and trips the
+  // 11-player cap below for no reason.
   const startingIds = new Set(rows.filter(r => r.slot_type === "starting").map(r => r.id))
-  if (target_slot === "starting") {
-    startingIds.add(entry_id)
-    if (displaced_entry_id) startingIds.delete(displaced_entry_id)
-  } else {
-    startingIds.delete(entry_id)
-    if (displaced_entry_id) startingIds.add(displaced_entry_id)
+  startingIds.delete(entry_id)
+  if (target_slot === "starting") startingIds.add(entry_id)
+  if (displaced_entry_id) {
+    startingIds.delete(displaced_entry_id)
+    if (entry.slot_type === "starting") startingIds.add(displaced_entry_id)
   }
 
   // Only hard caps are enforced here (never exceed 11, never exceed a

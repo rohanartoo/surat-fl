@@ -161,6 +161,40 @@ describe("POST /api/team/swap", () => {
     })
   })
 
+  it("allows reordering two bench players (sub priority) even with a full 11-man Starting XI", async () => {
+    // Regression test: the formation-cap simulation used to assume any swap
+    // with a displaced_entry_id was cross-section (starting <-> bench), so a
+    // same-section bench reorder phantom-added the displaced bench player
+    // into the simulated Starting XI, tripping the 11-player cap for a move
+    // that never touches the Starting XI at all.
+    const starterPositions = ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "FWD", "FWD"]
+    const starters = starterPositions.map((position, i) => ({
+      id: `s${i}`, slot_type: "starting", player: { position },
+    }))
+    mockSupabase = createMockSupabase({
+      tables: {
+        roster_entries: [
+          { data: { id: "e1", slot_type: "bench", team_id: "t1", player_id: 99 } },
+          {
+            data: [
+              ...starters,
+              { id: "e1", slot_type: "bench", player: { position: "FWD" } },
+              { id: "d1", slot_type: "bench", player: { position: "FWD" } },
+              { id: "b2", slot_type: "bench", player: { position: "GK" } },
+              { id: "b3", slot_type: "bench", player: { position: "DEF" } },
+            ],
+          },
+          { data: [{ id: "e1", base_price: 5, is_captain: false, is_vice_captain: false }] },
+        ],
+      },
+      rpcs: { rpc_swap_roster_entry: { data: null } },
+    })
+    const res = await callAction("swap", { entry_id: "e1", target_slot: "bench", bench_order: 2, displaced_entry_id: "d1" })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.success).toBe(true)
+  })
+
   it("propagates an rpc_swap_roster_entry error instead of silently succeeding", async () => {
     mockSupabase = createMockSupabase({
       tables: {
