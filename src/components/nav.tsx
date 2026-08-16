@@ -6,8 +6,14 @@ import { createClient } from "@/lib/supabase/client"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Gavel, Users, User, Trophy, Settings, LogOut, ArrowLeftRight } from "lucide-react"
+import { LayoutDashboard, Gavel, Users, User, Trophy, Settings, LogOut, ArrowLeftRight, Menu } from "lucide-react"
 import type { Role } from "@/types"
 
 const navItems: { href: string; label: string; icon: typeof LayoutDashboard; roles?: Role[] }[] = [
@@ -63,8 +69,12 @@ export function Nav({ displayName, role }: NavProps) {
             <span className="font-semibold tracking-tight text-sm">Surat FL</span>
           </Link>
 
-          {/* Nav links */}
-          <nav className="flex items-center gap-1">
+          {/* Nav links — collapses to a dropdown below md, since the full
+              inline row doesn't fit a phone width and previously forced the
+              layout viewport wider than the visual viewport (breaking
+              alignment across the whole page whenever anything triggered a
+              reflow, e.g. opening an unrelated dropdown elsewhere). */}
+          <nav className="hidden md:flex items-center gap-1">
             {navItems.filter(item => !item.roles || item.roles.includes(role)).map(({ href, label, icon: Icon }) => (
               <Link key={href} href={href}>
                 <Button
@@ -83,9 +93,9 @@ export function Nav({ displayName, role }: NavProps) {
           </nav>
 
           {/* Right: identity + actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             {displayName && (
-              <div className="flex items-center gap-1.5">
+              <div className="hidden sm:flex items-center gap-1.5">
                 <Badge
                   variant="outline"
                   className={cn("text-[10px] h-5 px-1.5 font-medium", roleBadgeStyle[role])}
@@ -101,10 +111,49 @@ export function Nav({ displayName, role }: NavProps) {
               size="icon"
               onClick={signOut}
               aria-label="Sign out"
-              className="text-muted-foreground hover:text-foreground"
+              className="hidden md:inline-flex text-muted-foreground hover:text-foreground"
             >
               <LogOut className="h-4 w-4" strokeWidth={1.5} />
             </Button>
+
+            {/* Mobile nav — same items, reachable without hover, no fixed-width row to overflow. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Open menu"
+                  className="md:hidden text-muted-foreground hover:text-foreground"
+                >
+                  <Menu className="h-4 w-4" strokeWidth={1.5} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="md:hidden">
+                {displayName && (
+                  <div className="flex items-center gap-1.5 px-2 py-1.5">
+                    <Badge
+                      variant="outline"
+                      className={cn("text-[10px] h-5 px-1.5 font-medium", roleBadgeStyle[role])}
+                    >
+                      {roleLabel[role]}
+                    </Badge>
+                    <span className="text-sm font-medium text-foreground truncate">{displayName}</span>
+                  </div>
+                )}
+                {navItems.filter(item => !item.roles || item.roles.includes(role)).map(({ href, label, icon: Icon }) => (
+                  <DropdownMenuItem key={href} asChild className={cn(pathname === href && "bg-accent")}>
+                    <Link href={href} className="flex items-center gap-2">
+                      <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                      {label}
+                    </Link>
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuItem onClick={signOut} className="text-destructive flex items-center gap-2">
+                  <LogOut className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </div>
