@@ -77,12 +77,14 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
-  // Displayed top-to-bottom by position (GK, DEF, MID, FWD). Bench priority
-  // (bench_order, used by auto-subs) is unaffected — it's a secondary sort
-  // key here, still shown via the numbered badge on each card.
+  // Starting XI is displayed top-to-bottom by position (GK, DEF, MID, FWD).
+  // Bench is displayed purely by bench_order (sub priority) — position must
+  // NOT factor into the sort here, or dragging to reorder sub priority would
+  // visually snap back to a position-grouped order on every re-render,
+  // making the reorder look like it silently failed.
   const startingXI = roster.filter(e => e.slot_type === "starting").sort(byPosition)
   const bench = roster.filter(e => e.slot_type === "bench")
-    .sort((a, b) => byPosition(a, b) || (a.bench_order ?? 99) - (b.bench_order ?? 99))
+    .sort((a, b) => (a.bench_order ?? 99) - (b.bench_order ?? 99))
   const dropped = roster.filter(e => e.slot_type === "dropped")
 
   const activeEntry = activeId ? roster.find(e => e.id === activeId) ?? null : null
