@@ -57,11 +57,11 @@ export function DroppedSection({ entries, canEdit, onReturnFromDrop, quotaSummar
                 <span className="text-sm font-mono text-muted-foreground">{formatMoney(entry.base_price)}</span>
                 {canEdit && (
                   dropsLocked
-                    ? <span className="text-[10px] text-muted-foreground italic hidden group-hover:inline">Locked</span>
+                    ? <span className="text-[10px] text-muted-foreground italic">Locked</span>
                     : <Button
                         size="sm"
                         variant="outline"
-                        className="h-6 px-2 text-xs hidden group-hover:flex"
+                        className="h-6 px-2 text-xs"
                         onClick={() => onReturnFromDrop(entry.id)}
                       >
                         Return

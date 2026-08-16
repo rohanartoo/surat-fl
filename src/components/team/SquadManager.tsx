@@ -33,6 +33,8 @@ interface Props {
   canEdit: boolean
   quotaSummary?: DropQuotaSummary
   dropsLocked?: boolean
+  /** Next unplayed gameweek's opponent(s) per PL club, keyed by players.fpl_team. */
+  opponentsByTeam?: Record<string, { opponent_short: string; is_home: boolean }[]>
   /** Rendered as the third grid column, alongside Starting XI/Bench and Dropped — lets the
    * page place Gameweek Performance so it starts at the same vertical height as Starting XI. */
   children?: ReactNode
@@ -54,7 +56,7 @@ async function post(action: string, body: object) {
   return data
 }
 
-export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary: initialQuotaSummary, dropsLocked, children }: Props) {
+export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary: initialQuotaSummary, dropsLocked, opponentsByTeam, children }: Props) {
   const [roster, setRoster] = useState<Entry[]>(initialRoster)
   const [quotaSummary, setQuotaSummary] = useState(initialQuotaSummary)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -415,6 +417,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
                     <PlayerCard
                       key={entry.id}
                       entry={entry}
+                      opponents={opponentsByTeam?.[entry.player.fpl_team]}
                       canEdit={effectiveCanEdit}
                       onSetCaptain={handleSetCaptain}
                       onSetVC={handleSetVC}
@@ -451,6 +454,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
                     <PlayerCard
                       key={entry.id}
                       entry={entry}
+                      opponents={opponentsByTeam?.[entry.player.fpl_team]}
                       benchNumber={entry.bench_order ?? i + 1}
                       canEdit={effectiveCanEdit}
                       onSetCaptain={handleSetCaptain}

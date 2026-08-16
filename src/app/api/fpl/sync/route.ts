@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient as createSupabaseClient } from "@supabase/supabase-js"
-import { syncFplPlayers } from "@/lib/fpl"
+import { syncFplPlayers, syncFixtures } from "@/lib/fpl"
 import { verifySyncSecret } from "@/lib/auth"
 
 export async function POST(request: Request) {
@@ -15,7 +15,8 @@ export async function POST(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
     const result = await syncFplPlayers(supabase)
-    return NextResponse.json({ ...result, ok: true })
+    const { synced: fixturesSynced } = await syncFixtures(supabase)
+    return NextResponse.json({ ...result, fixturesSynced, ok: true })
   } catch (err) {
     console.error("[fpl/sync] error:", err)
     const message = err instanceof Error

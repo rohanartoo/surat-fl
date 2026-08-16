@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole } from "@/lib/roles"
-import { syncFplPlayers } from "@/lib/fpl"
+import { syncFplPlayers, syncFixtures } from "@/lib/fpl"
 
 // Manual, UI-triggered FPL sync for AM/admin (e.g. right before a draft).
 // Deliberately a separate route from /api/fpl/sync rather than adding
@@ -23,7 +23,8 @@ export async function POST() {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
     const result = await syncFplPlayers(supabase)
-    return NextResponse.json({ ...result, ok: true })
+    const { synced: fixturesSynced } = await syncFixtures(supabase)
+    return NextResponse.json({ ...result, fixturesSynced, ok: true })
   } catch (err) {
     console.error("[admin/sync-fpl] error:", err)
     const message = err instanceof Error ? err.message : "Internal server error."

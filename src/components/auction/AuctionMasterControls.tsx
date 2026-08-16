@@ -101,7 +101,7 @@ export function AuctionMasterControls() {
       const res = await fetch("/api/admin/sync-fpl", { method: "POST" })
       const data = await res.json()
       if (!res.ok) { setSyncError(data.error ?? "Sync failed."); return }
-      setSyncResult(`Synced ${data.synced} players${data.pruned > 0 ? ` (${data.pruned} pruned)` : ""}.`)
+      setSyncResult(`Synced ${data.synced} players${data.pruned > 0 ? ` (${data.pruned} pruned)` : ""} and ${data.fixturesSynced} fixtures.`)
       if (data.warning) setSyncWarning(data.warning)
       await refresh()
     } finally {

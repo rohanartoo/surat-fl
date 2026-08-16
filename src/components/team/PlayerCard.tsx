@@ -2,14 +2,22 @@
 
 import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
+import { MoreVertical } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { PositionBadge } from "@/components/ui/PositionBadge"
 import { formatMoney, cn } from "@/lib/utils"
 import type { RosterEntry, Player } from "@/types"
 
 interface Props {
   entry: RosterEntry & { player: Player }
+  opponents?: { opponent_short: string; is_home: boolean }[]
   benchNumber?: number
   canEdit: boolean
   onSetCaptain: (entryId: string) => void
@@ -21,8 +29,14 @@ interface Props {
   onSelect?: () => void
 }
 
+function opponentLabel(opponents?: { opponent_short: string; is_home: boolean }[]) {
+  if (!opponents || opponents.length === 0) return null
+  return opponents.map(o => `${o.opponent_short} (${o.is_home ? "H" : "A"})`).join(", ")
+}
+
 export function PlayerCard({
   entry,
+  opponents,
   benchNumber,
   canEdit,
   onSetCaptain,
@@ -46,6 +60,8 @@ export function PlayerCard({
     transform: CSS.Transform.toString(transform),
     transition,
   }
+
+  const oppLabel = opponentLabel(opponents)
 
   return (
     <div
@@ -94,43 +110,43 @@ export function PlayerCard({
               <Badge variant="secondary" className="text-[10px] h-4 px-1 py-0 uppercase">VC</Badge>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5">{entry.player.fpl_team_short}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {entry.player.fpl_team_short}
+            {oppLabel && <> · vs {oppLabel}</>}
+          </p>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Edit actions — visible on hover for owner */}
+        {/* Edit actions — always visible (not hover-gated) so they're reachable on touch screens */}
         {canEdit && (
-          <div className="hidden group-hover:flex items-center gap-1">
-            {entry.slot_type === "starting" && !entry.is_captain && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-amber-500"
-                onClick={(e) => { e.stopPropagation(); onSetCaptain(entry.id) }}
+                className="h-6 w-6 p-0 text-muted-foreground"
+                onClick={(e) => e.stopPropagation()}
               >
-                C
+                <MoreVertical className="h-3.5 w-3.5" />
               </Button>
-            )}
-            {entry.slot_type === "starting" && !entry.is_vice_captain && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 px-1.5 text-[10px] text-muted-foreground"
-                onClick={(e) => { e.stopPropagation(); onSetVC(entry.id) }}
-              >
-                VC
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
-              onClick={(e) => { e.stopPropagation(); onMarkDrop(entry.id) }}
-            >
-              Drop
-            </Button>
-          </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+              {entry.slot_type === "starting" && !entry.is_captain && (
+                <DropdownMenuItem onClick={() => onSetCaptain(entry.id)}>
+                  Make Captain
+                </DropdownMenuItem>
+              )}
+              {entry.slot_type === "starting" && !entry.is_vice_captain && (
+                <DropdownMenuItem onClick={() => onSetVC(entry.id)}>
+                  Make Vice-Captain
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem className="text-destructive" onClick={() => onMarkDrop(entry.id)}>
+                Drop
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
 
         <span className="text-sm font-mono font-medium text-muted-foreground group-hover:text-foreground transition-colors shrink-0">

@@ -6,7 +6,7 @@ import { AdminTeamControls } from "@/components/settings/AdminTeamControls"
 import { GameweekPerformance } from "@/components/team/GameweekPerformance"
 import { getDropQuota, getCarryoverForTeam } from "@/lib/drops"
 import { getTeamGameweekPerformance, getLastSyncedGameweek } from "@/lib/scoring"
-import { fetchCurrentGameweek } from "@/lib/fpl"
+import { fetchCurrentGameweek, getUpcomingOpponents } from "@/lib/fpl"
 import type { LeagueTeam, Player, RosterEntry, DropQuotaSummary, AuctionType } from "@/types"
 
 interface PageProps {
@@ -57,9 +57,10 @@ export default async function TeamPage({ params }: PageProps) {
   // empty flash — the currently active GW if FPL has one, else whatever we
   // last actually synced, else GW1.
   const supabase = await createClient()
-  const [fplCurrentGw, lastSyncedGw] = await Promise.all([
+  const [fplCurrentGw, lastSyncedGw, opponentsByTeam] = await Promise.all([
     fetchCurrentGameweek(),
     getLastSyncedGameweek(supabase),
+    getUpcomingOpponents(supabase),
   ])
   const currentGw = fplCurrentGw ?? lastSyncedGw ?? 1
   const initialGw = lastSyncedGw ?? currentGw
@@ -88,6 +89,7 @@ export default async function TeamPage({ params }: PageProps) {
         canEdit={canEdit}
         quotaSummary={quotaSummary}
         dropsLocked={dropsLocked}
+        opponentsByTeam={opponentsByTeam}
       >
         <div className="xl:sticky xl:top-20">
           <GameweekPerformance

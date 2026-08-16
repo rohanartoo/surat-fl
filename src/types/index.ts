@@ -106,6 +106,15 @@ export interface FplEvent {
   finished: boolean
 }
 
+export interface FplFixture {
+  id: number
+  event: number | null
+  team_h: number
+  team_a: number
+  kickoff_time: string | null
+  finished: boolean
+}
+
 // =============================================
 // DATABASE TYPES
 // =============================================
@@ -153,6 +162,17 @@ export interface Player {
   status: string
   news: string
   updated_at: string
+}
+
+export interface Fixture {
+  id: number
+  event: number | null
+  team_h_name: string
+  team_a_name: string
+  team_h_short: string
+  team_a_short: string
+  kickoff_time: string | null
+  finished: boolean
 }
 
 export interface RosterEntry {

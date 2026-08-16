@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
-import type { FplBootstrap, FplPlayer } from "@/types"
+import type { FplBootstrap, FplPlayer, FplFixture } from "@/types"
 import { positionLabel } from "@/lib/utils"
 
 const FPL_BASE = "https://fantasy.premierleague.com/api"
@@ -36,6 +36,15 @@ export async function fetchFplBootstrap(): Promise<FplBootstrap> {
     next: { revalidate: 3600 },
   })
   if (!res.ok) throw new Error(`FPL API error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchFplFixtures(): Promise<FplFixture[]> {
+  const res = await fetch(`${FPL_BASE}/fixtures/`, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+    next: { revalidate: 3600 },
+  })
+  if (!res.ok) throw new Error(`FPL fixtures API error: ${res.status}`)
   return res.json()
 }
 
@@ -150,4 +159,77 @@ export async function syncFplPlayers(supabase: SupabaseClient): Promise<{
   }
 
   return { synced: players.length, pruned: (pruneResult as { pruned: number }).pruned }
+}
+
+/**
+ * Fetches FPL's current fixture list and upserts every fixture (team names
+ * denormalized onto the row so joining against players.fpl_team is a plain
+ * string match — see 20260816000000_fixtures.sql). No prune step: unlike
+ * player elements, FPL's fixture list doesn't shrink between syncs.
+ */
+export async function syncFixtures(supabase: SupabaseClient): Promise<{ synced: number }> {
+  const [bootstrap, fixtures] = await Promise.all([fetchFplBootstrap(), fetchFplFixtures()])
+
+  const teamMap = bootstrap.teams.reduce<Record<number, { name: string; short_name: string }>>(
+    (acc, t) => { acc[t.id] = { name: t.name, short_name: t.short_name }; return acc },
+    {}
+  )
+
+  const rows = fixtures.map((f) => ({
+    id: f.id,
+    event: f.event,
+    team_h_name: teamMap[f.team_h]?.name ?? "",
+    team_a_name: teamMap[f.team_a]?.name ?? "",
+    team_h_short: teamMap[f.team_h]?.short_name ?? "",
+    team_a_short: teamMap[f.team_a]?.short_name ?? "",
+    kickoff_time: f.kickoff_time,
+    finished: f.finished,
+  }))
+
+  const batchSize = 500
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize)
+    const { error } = await supabase.from("fixtures").upsert(batch, { onConflict: "id" })
+    if (error) {
+      console.error("[syncFixtures] upsert error:", JSON.stringify(error))
+      throw error
+    }
+  }
+
+  return { synced: rows.length }
+}
+
+/**
+ * Maps each PL club to its opponent(s) in the next gameweek that hasn't
+ * finished yet — deliberately distinct from fetchCurrentGameweek(), which
+ * drives GameweekPerformance's past-results default view. An array handles
+ * the rare double-gameweek case; a club with no entry has a blank gameweek.
+ */
+export async function getUpcomingOpponents(
+  supabase: SupabaseClient
+): Promise<Record<string, { opponent_short: string; is_home: boolean }[]>> {
+  const { data: nextRow } = await supabase
+    .from("fixtures")
+    .select("event")
+    .eq("finished", false)
+    .not("event", "is", null)
+    .order("event", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  const byTeam: Record<string, { opponent_short: string; is_home: boolean }[]> = {}
+  const nextEvent = (nextRow as { event: number } | null)?.event
+  if (nextEvent === undefined || nextEvent === null) return byTeam
+
+  const { data: fixturesData } = await supabase
+    .from("fixtures")
+    .select("team_h_name, team_a_name, team_h_short, team_a_short")
+    .eq("event", nextEvent)
+
+  for (const f of (fixturesData ?? []) as { team_h_name: string; team_a_name: string; team_h_short: string; team_a_short: string }[]) {
+    (byTeam[f.team_h_name] ??= []).push({ opponent_short: f.team_a_short, is_home: true })
+    ;(byTeam[f.team_a_name] ??= []).push({ opponent_short: f.team_h_short, is_home: false })
+  }
+
+  return byTeam
 }
