@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { syncGameweekPoints, applyDropPenalties } from "@/lib/scoring"
-import { fetchFplBootstrap } from "@/lib/fpl"
+import { fetchFplBootstrap, syncFplPlayers, syncFixtures } from "@/lib/fpl"
 import { verifySyncSecret } from "@/lib/auth"
 
 function createClient() {
@@ -12,19 +12,45 @@ function createClient() {
 }
 
 async function runCron() {
+  const supabase = createClient()
+
+  // Player/fixture data (used by the Auction pool and My Team's "vs
+  // opponent" display) previously only ever updated when an AM/admin
+  // manually clicked "Sync FPL data" — nothing scheduled it. Folded in here
+  // rather than as a second Vercel cron entry, keeping the cron-job count at
+  // one (Hobby-plan crons are capped at 2/day). Runs regardless of whether a
+  // gameweek is currently active — player/fixture data can go stale between
+  // seasons or pre-season just as easily as mid-season. Each sync gets its
+  // own try/catch so a failure in one never blocks the other, or the
+  // points/penalty sync below.
+  let fplSyncResult: unknown
+  try {
+    fplSyncResult = await syncFplPlayers(supabase)
+  } catch (e) {
+    console.error("[scoring/cron] syncFplPlayers failed:", e)
+    fplSyncResult = { error: e instanceof Error ? e.message : String(e) }
+  }
+  let fixturesSyncResult: unknown
+  try {
+    fixturesSyncResult = await syncFixtures(supabase)
+  } catch (e) {
+    console.error("[scoring/cron] syncFixtures failed:", e)
+    fixturesSyncResult = { error: e instanceof Error ? e.message : String(e) }
+  }
+
   const bootstrap = await fetchFplBootstrap()
   const currentEvent = bootstrap.events.find(e => e.is_current)
 
-  // Skip only if there's no active gameweek at all. Do NOT skip once it's
-  // finished — that final sync is what actually resolves auto-subs and the
-  // captain->VC fallback (syncGameweekPoints gates those on gwFinished), so
-  // skipping here would mean the finished/final state never gets written.
+  // Skip the points/penalty sync only if there's no active gameweek at all.
+  // Do NOT skip once it's finished — that final sync is what actually
+  // resolves auto-subs and the captain->VC fallback (syncGameweekPoints
+  // gates those on gwFinished), so skipping here would mean the
+  // finished/final state never gets written.
   if (!currentEvent) {
-    return NextResponse.json({ skipped: true, reason: "No active gameweek" })
+    return NextResponse.json({ skipped: true, reason: "No active gameweek", fplSyncResult, fixturesSyncResult })
   }
 
   const gw = currentEvent.id
-  const supabase = createClient()
 
   const [pointsResult, penaltyResult] = await Promise.all([
     syncGameweekPoints(gw, supabase, { gwFinished: currentEvent.finished }),
@@ -37,7 +63,7 @@ async function runCron() {
     .delete()
     .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
 
-  return NextResponse.json({ ok: true, gameweek: gw, ...pointsResult, ...penaltyResult })
+  return NextResponse.json({ ok: true, gameweek: gw, fplSyncResult, fixturesSyncResult, ...pointsResult, ...penaltyResult })
 }
 
 /**
