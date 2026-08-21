@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
-import { getProfile } from "@/lib/roles"
+import { getProfile, hasRole } from "@/lib/roles"
 import { notFound } from "next/navigation"
 import { SquadManager } from "@/components/team/SquadManager"
 import { AdminTeamControls } from "@/components/settings/AdminTeamControls"
@@ -7,6 +7,7 @@ import { GameweekPerformance } from "@/components/team/GameweekPerformance"
 import { getDropQuota, getCarryoverForTeam } from "@/lib/drops"
 import { getTeamGameweekPerformance, getLastSyncedGameweek } from "@/lib/scoring"
 import { fetchCurrentGameweek, getUpcomingOpponents } from "@/lib/fpl"
+import { getLineupLockState } from "@/lib/lineup-lock"
 import type { LeagueTeam, Player, RosterEntry, DropQuotaSummary, AuctionType } from "@/types"
 
 interface PageProps {
@@ -57,14 +58,19 @@ export default async function TeamPage({ params }: PageProps) {
   // empty flash — the currently active GW if FPL has one, else whatever we
   // last actually synced, else GW1.
   const supabase = await createClient()
-  const [fplCurrentGw, lastSyncedGw, opponentsByTeam] = await Promise.all([
+  const [fplCurrentGw, lastSyncedGw, opponentsByTeam, lock, canOverrideLock] = await Promise.all([
     fetchCurrentGameweek(),
     getLastSyncedGameweek(supabase),
     getUpcomingOpponents(supabase),
+    getLineupLockState(supabase),
+    hasRole("auction_master"),
   ])
   const currentGw = fplCurrentGw ?? lastSyncedGw ?? 1
   const initialGw = lastSyncedGw ?? currentGw
   const initialGwPerformance = await getTeamGameweekPerformance(team.id, initialGw, supabase)
+  // Separate from canEdit (ownership/role) so the UI can tell "read-only —
+  // not your team" apart from "locked — GW deadline passed". AM/admin bypass.
+  const lineupLocked = lock.locked && !canOverrideLock
 
   return (
     <div className="space-y-6">
@@ -90,6 +96,9 @@ export default async function TeamPage({ params }: PageProps) {
         quotaSummary={quotaSummary}
         dropsLocked={dropsLocked}
         opponentsByTeam={opponentsByTeam}
+        lineupLock={lock}
+        lineupLocked={lineupLocked}
+        canOverrideLock={canOverrideLock}
       >
         <div className="xl:sticky xl:top-20">
           <GameweekPerformance

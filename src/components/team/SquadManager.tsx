@@ -23,9 +23,11 @@ import { Badge } from "@/components/ui/badge"
 import { PlayerCard, PlayerCardOverlay } from "./PlayerCard"
 import { DroppedSection } from "./DroppedSection"
 import { TeamBudgetBar } from "./TeamBudgetBar"
+import { DeadlineBanner } from "./DeadlineBanner"
 import { validateFormation } from "@/lib/auction-engine"
 import { SQUAD_RULES } from "@/types"
 import type { RosterEntry, Player, Position, DropQuotaSummary } from "@/types"
+import type { LineupLockState } from "@/lib/lineup-lock"
 
 interface Props {
   initialRoster: (RosterEntry & { player: Player })[]
@@ -35,6 +37,14 @@ interface Props {
   dropsLocked?: boolean
   /** Next unplayed gameweek's opponent(s) per PL club, keyed by players.fpl_team. */
   opponentsByTeam?: Record<string, { opponent_short: string; is_home: boolean }[]>
+  /** Deadline-lock state (src/lib/lineup-lock.ts) — separate from canEdit so
+   * "read-only, not your team" and "locked, GW deadline passed" render as
+   * distinct banners rather than collapsing into one generic disabled state. */
+  lineupLock?: LineupLockState
+  /** Whether editing is actually blocked right now — lock.locked minus an AM/admin override. */
+  lineupLocked?: boolean
+  /** Whether the viewer can edit through the lock (AM/admin) — drives the "editable as Auction Master" note. */
+  canOverrideLock?: boolean
   /** Rendered as the third grid column, alongside Starting XI/Bench and Dropped — lets the
    * page place Gameweek Performance so it starts at the same vertical height as Starting XI. */
   children?: ReactNode
@@ -56,7 +66,7 @@ async function post(action: string, body: object) {
   return data
 }
 
-export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary: initialQuotaSummary, dropsLocked, opponentsByTeam, children }: Props) {
+export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary: initialQuotaSummary, dropsLocked, opponentsByTeam, lineupLock, lineupLocked, canOverrideLock, children }: Props) {
   const [roster, setRoster] = useState<Entry[]>(initialRoster)
   const [quotaSummary, setQuotaSummary] = useState(initialQuotaSummary)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -372,12 +382,30 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
   // Disables both drag (via useSortable's disabled prop) and tap-to-select
   // while a swap is in flight — belt-and-braces alongside the isSavingRef
   // guard in applySwap, so a click and a drag-end firing off the same
-  // gesture can't both register.
-  const effectiveCanEdit = canEdit && !isSaving
+  // gesture can't both register. Also disabled once the gameweek deadline
+  // has passed (src/lib/lineup-lock.ts) — the server enforces this too, this
+  // just keeps the UI from offering an action that would just 409.
+  const effectiveCanEdit = canEdit && !lineupLocked && !isSaving
 
   return (
     <div className="space-y-6">
       <TeamBudgetBar budget={teamBudget} totalSpent={totalSpent} activeCount={activeCount} pendingDropCredit={pendingDropCredit} />
+
+      {lineupLocked && (
+        <p className="text-sm text-amber-500 bg-amber-500/10 px-3 py-2 rounded-md">
+          🔒 GW {lineupLock?.lockedGameweek} locked — lineups are frozen until this gameweek is fully scored.
+        </p>
+      )}
+
+      {!lineupLocked && lineupLock?.locked && canOverrideLock && (
+        <p className="text-xs text-muted-foreground bg-secondary/50 px-3 py-2 rounded-md">
+          Lock active (GW {lineupLock.lockedGameweek}) — editable as Auction Master.
+        </p>
+      )}
+
+      {!lineupLock?.locked && canEdit && lineupLock?.nextDeadline && (
+        <DeadlineBanner deadline={lineupLock.nextDeadline} gameweek={lineupLock.nextDeadlineGameweek ?? 0} />
+      )}
 
       {formationError && (
         <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
@@ -500,7 +528,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
           canEdit={canEdit}
           onReturnFromDrop={handleReturnFromDrop}
           quotaSummary={quotaSummary}
-          dropsLocked={dropsLocked}
+          dropsLocked={dropsLocked || lineupLocked}
         />
 
         {children}

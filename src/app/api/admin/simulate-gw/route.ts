@@ -119,5 +119,20 @@ export async function POST(request: NextRequest) {
   const { penaltyRows } = await applyDropPenalties(Math.max(...gws), supabase)
   const totalPenaltyRows = penaltyRows
 
+  // Also mark simulated gameweeks final, or a simulated PAST gameweek would
+  // wedge the lineup deadline lock open forever (src/lib/lineup-lock.ts) —
+  // this route writes gameweek_points directly, bypassing the finalization
+  // syncGameweekPoints normally does. gameweek_scoring_status only allows
+  // 1-38 (a real season length); this route allows testing GWs up to 100,
+  // but anything past 38 can never appear in the real fixtures table anyway,
+  // so it can't affect real lock state — skip finalizing those.
+  const realGws = gws.filter(gw => gw <= 38)
+  if (realGws.length > 0) {
+    const { error: finalizeErr } = await supabase
+      .from("gameweek_scoring_status")
+      .upsert(realGws.map(gameweek => ({ gameweek, finalized_by: "simulation" })), { onConflict: "gameweek", ignoreDuplicates: true })
+    if (finalizeErr) return NextResponse.json({ error: finalizeErr.message }, { status: 500 })
+  }
+
   return NextResponse.json({ ok: true, gameweeks: gws, rows: totalRows, penaltyRows: totalPenaltyRows })
 }

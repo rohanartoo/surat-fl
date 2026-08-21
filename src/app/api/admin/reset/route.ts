@@ -112,6 +112,14 @@ async function handleFullWipe() {
   if (gwErr) return NextResponse.json({ error: `gameweek_points: ${gwErr.message}` }, { status: 500 })
   steps.push("gameweek points deleted")
 
+  // Without this, a new season would inherit last season's GW1-38 marked
+  // final (src/lib/lineup-lock.ts), and the lineup deadline lock would never
+  // engage again.
+  const { error: scoringStatusErr } = await supabase
+    .from("gameweek_scoring_status").delete().neq("gameweek", 0)
+  if (scoringStatusErr) return NextResponse.json({ error: `gameweek_scoring_status: ${scoringStatusErr.message}` }, { status: 500 })
+  steps.push("gameweek scoring status reset")
+
   const { error: priceErr } = await supabase
     .from("players").update({ base_price: 1 }).neq("id", 0)
   if (priceErr) return NextResponse.json({ error: `players base_price: ${priceErr.message}` }, { status: 500 })

@@ -3,6 +3,15 @@ import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { syncGameweekPoints, applyDropPenalties } from "@/lib/scoring"
 import { fetchFplBootstrap, syncFplPlayers, syncFixtures } from "@/lib/fpl"
 import { verifySyncSecret } from "@/lib/auth"
+import { getFinalizedGameweeks } from "@/lib/lineup-lock"
+
+// How many past, finished-but-unfinalized gameweeks to catch up per cron run.
+// A missed cron run (or FPL flipping is_current before a gameweek's final
+// rebuild ever happened) must not wedge the lineup lock open forever — see
+// src/lib/lineup-lock.ts. Capped so one bad night can't turn into an
+// unbounded rebuild pass; a backlog this deep would mean the cron has been
+// broken for weeks, which needs investigating anyway, not silently absorbing.
+const CATCH_UP_LIMIT = 3
 
 function createClient() {
   return createServiceClient(
@@ -41,20 +50,45 @@ async function runCron() {
   const bootstrap = await fetchFplBootstrap()
   const currentEvent = bootstrap.events.find(e => e.is_current)
 
+  // Catch up any past gameweek FPL has marked finished but that never got
+  // its final (gwFinished) rebuild — e.g. a missed cron run, or is_current
+  // moving to the next gameweek before that happened. These are safe to
+  // rebuild unconditionally: every one of them has been past its own
+  // lineup-lock deadline since it started, so the roster can't have
+  // drifted. Runs even if there's no currentEvent at all (end of season).
+  const finalizedGws = await getFinalizedGameweeks(supabase)
+  const toCatchUp = bootstrap.events
+    .filter(e => e.finished && e.id !== currentEvent?.id && !finalizedGws.has(e.id))
+    .sort((a, b) => a.id - b.id)
+    .slice(0, CATCH_UP_LIMIT)
+  const catchUpResults: Record<number, unknown> = {}
+  for (const e of toCatchUp) {
+    try {
+      catchUpResults[e.id] = await syncGameweekPoints(e.id, supabase, { gwFinished: true })
+    } catch (err) {
+      console.error(`[scoring/cron] catch-up finalize GW ${e.id} failed:`, err)
+      catchUpResults[e.id] = { error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   // Skip the points/penalty sync only if there's no active gameweek at all.
   // Do NOT skip once it's finished — that final sync is what actually
   // resolves auto-subs and the captain->VC fallback (syncGameweekPoints
   // gates those on gwFinished), so skipping here would mean the
   // finished/final state never gets written.
   if (!currentEvent) {
-    return NextResponse.json({ skipped: true, reason: "No active gameweek", fplSyncResult, fixturesSyncResult })
+    return NextResponse.json({ skipped: true, reason: "No active gameweek", fplSyncResult, fixturesSyncResult, catchUpResults })
   }
 
   const gw = currentEvent.id
+  // Computed here (not left to syncGameweekPoints's internal safety flip)
+  // because preserveRoster also gates applyDropPenalties below — a penalty
+  // must never be applied to an already-finalized gameweek either.
+  const finalized = finalizedGws.has(gw)
 
   const [pointsResult, penaltyResult] = await Promise.all([
-    syncGameweekPoints(gw, supabase, { gwFinished: currentEvent.finished }),
-    applyDropPenalties(gw, supabase),
+    syncGameweekPoints(gw, supabase, { preserveRoster: finalized, gwFinished: currentEvent.finished }),
+    finalized ? Promise.resolve({ penaltyRows: 0 }) : applyDropPenalties(gw, supabase),
   ])
 
   // Purge chat messages older than 30 days
@@ -63,7 +97,7 @@ async function runCron() {
     .delete()
     .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
 
-  return NextResponse.json({ ok: true, gameweek: gw, fplSyncResult, fixturesSyncResult, ...pointsResult, ...penaltyResult })
+  return NextResponse.json({ ok: true, gameweek: gw, fplSyncResult, fixturesSyncResult, catchUpResults, ...pointsResult, ...penaltyResult })
 }
 
 /**

@@ -6,6 +6,7 @@ import { getCurrentAuction } from "@/lib/auctions"
 import { getDropQuota, getCarryoverForTeam } from "@/lib/drops"
 import { repairTeamCaptaincy } from "@/lib/roster"
 import { calcDropPrice } from "@/lib/utils"
+import { assertLineupEditable } from "@/lib/lineup-lock"
 import { SQUAD_RULES } from "@/types"
 import type { Position, AuctionType } from "@/types"
 
@@ -37,6 +38,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   } catch (e) {
     const message = e instanceof Error ? e.message : "Internal server error."
     if (message.startsWith("Requires role:")) return err(message, 403)
+    if (message.startsWith("Lineup locked:")) return err(message, 409)
     console.error(`[team/${action}]`, e)
     return err("Internal server error.", 500)
   }
@@ -62,6 +64,7 @@ async function handleSwap(request: NextRequest) {
   if (!entry) return err("Roster entry not found.", 404)
 
   await assertOwnership(entry.team_id)
+  await assertLineupEditable(supabase)
 
   // Fetch all active entries with player positions for formation validation
   const { data: allEntries } = await supabase
@@ -142,6 +145,7 @@ async function handleSetCaptain(request: NextRequest) {
   if (entry.slot_type !== "starting") return err("Captain must be in the Starting XI.")
 
   await assertOwnership(entry.team_id)
+  await assertLineupEditable(supabase)
 
   const field = role === "captain" ? "is_captain" : "is_vice_captain"
   const otherField = role === "captain" ? "is_vice_captain" : "is_captain"
@@ -185,6 +189,7 @@ async function handleMarkDrop(request: NextRequest) {
   if (entry.slot_type === "dropped") return err("Player is already staged for drop.")
 
   await assertOwnership(entry.team_id)
+  await assertLineupEditable(supabase)
 
   // Find the current auction (for the team_drops foreign key)
   const auction = await getCurrentAuction<{ id: string; type: string; status: string; created_at: string }>(supabase, "id, type, status, created_at")
@@ -240,6 +245,7 @@ async function handleReturnFromDrop(request: NextRequest) {
   if (entry.slot_type !== "dropped") return err("Player is not staged for drop.")
 
   await assertOwnership(entry.team_id)
+  await assertLineupEditable(supabase)
 
   // Find the current auction. Un-staging, like staging, is only possible
   // before the auction starts — once live, any staged drop has already been

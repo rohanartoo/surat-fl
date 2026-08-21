@@ -1,8 +1,11 @@
-import { describe, it, expect } from "vitest"
-import { applyAutoSubs, determineEffectiveCaptain, getStandings, getGameweekHighlights } from "@/lib/scoring"
+import { describe, it, expect, vi } from "vitest"
+import { applyAutoSubs, determineEffectiveCaptain, getStandings, getGameweekHighlights, syncGameweekPoints } from "@/lib/scoring"
 import { validateFormation } from "@/lib/auction-engine"
+import { fetchFplLive } from "@/lib/fpl"
 import type { FplLiveStats } from "@/lib/fpl"
 import type { Position } from "@/types"
+
+vi.mock("@/lib/fpl", () => ({ fetchFplLive: vi.fn() }))
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -467,5 +470,69 @@ describe("getGameweekHighlights", () => {
     // t1: 60 - 8 = 52, t2: 55 -> t2 should win despite a lower raw total
     expect(result.topTeam?.team_id).toBe("t2")
     expect(result.topTeam?.points).toBe(55)
+  })
+})
+
+// ─── syncGameweekPoints ─────────────────────────────────────────────────────
+
+// A minimal thenable query-builder mock — every filter method just returns
+// the same chain, which resolves to { data, error } when awaited. Enough for
+// the two call shapes syncGameweekPoints's preserveRoster path needs:
+// .select(...).eq(...).not(...) and .update(...).eq(...).
+function makeSyncChain(data: unknown, error: unknown = null) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chain: any = Promise.resolve({ data, error })
+  chain.eq = () => chain
+  chain.not = () => chain
+  chain.maybeSingle = () => chain
+  chain.single = () => chain
+  return chain
+}
+
+describe("syncGameweekPoints", () => {
+  it("a finalized gameweek is never rebuilt from the roster — the caller's preserveRoster is ignored, only points refresh", async () => {
+    // The whole reason gameweek_scoring_status exists (see
+    // src/lib/lineup-lock.ts): even a caller that FORGOT to pass
+    // preserveRoster must never be able to rebuild a finalized gameweek's
+    // roster composition from current roster_entries. This exercises that
+    // safety net directly, independent of whether the cron/sync routes
+    // remember to compute it themselves.
+    vi.mocked(fetchFplLive).mockResolvedValue({
+      10: {
+        minutes: 90, total_points: 7, goals_scored: 1, assists: 0, clean_sheets: 0,
+        goals_conceded: 0, own_goals: 0, penalties_saved: 0, penalties_missed: 0,
+        yellow_cards: 0, red_cards: 0, saves: 0, bonus: 2,
+      },
+    })
+
+    const capturedUpdates: unknown[] = []
+    const queriedTables: string[] = []
+    const supabase = {
+      from: (table: string) => {
+        queriedTables.push(table)
+        if (table === "gameweek_scoring_status") {
+          return { select: () => makeSyncChain({ gameweek: 1 }, null) }
+        }
+        if (table === "gameweek_points") {
+          return {
+            select: () => makeSyncChain([{ id: "gp1", player_id: 10, is_captain: false }], null),
+            update: (payload: unknown) => { capturedUpdates.push(payload); return makeSyncChain(null, null) },
+            // Deliberately no delete/insert — the rebuild path calling either
+            // would throw "not a function" and fail this test, which is the
+            // point: a finalized gameweek must never reach that path.
+          }
+        }
+        throw new Error(`Unexpected table query in preserveRoster path: ${table}`)
+      },
+    }
+
+    // No preserveRoster passed — proving the finalization check itself
+    // forces it, not the caller remembering to.
+    const result = await syncGameweekPoints(1, supabase)
+
+    expect(result.preservedRoster).toBe(true)
+    expect(capturedUpdates).toEqual([{ points: 7, stat_breakdown: expect.objectContaining({ total_points: 7 }) }])
+    expect(queriedTables).not.toContain("roster_entries")
+    expect(queriedTables).not.toContain("teams")
   })
 })

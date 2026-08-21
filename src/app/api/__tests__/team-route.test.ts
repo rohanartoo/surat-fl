@@ -14,8 +14,13 @@ vi.mock("@/lib/roles", () => ({
   getProfile: vi.fn(),
 }))
 
+vi.mock("@/lib/lineup-lock", () => ({
+  assertLineupEditable: vi.fn(),
+}))
+
 const { POST } = await import("@/app/api/team/[action]/route")
 const { requireRole, assertOwnership } = await import("@/lib/roles")
+const { assertLineupEditable } = await import("@/lib/lineup-lock")
 
 function callAction(action: string, body: unknown) {
   const request = new NextRequest(`http://localhost/api/team/${action}`, {
@@ -29,6 +34,7 @@ function callAction(action: string, body: unknown) {
 beforeEach(() => {
   vi.mocked(requireRole).mockReset().mockResolvedValue(undefined)
   vi.mocked(assertOwnership).mockReset().mockResolvedValue(undefined)
+  vi.mocked(assertLineupEditable).mockReset().mockResolvedValue(undefined)
 })
 
 describe("POST /api/team/set-captain", () => {
@@ -92,6 +98,35 @@ describe("POST /api/team/set-captain", () => {
     expect(body.captain_id).not.toBeNull()
     expect(body.vice_captain_id).not.toBeNull()
     expect(body.captain_id).not.toBe(body.vice_captain_id)
+  })
+
+  it("409s when the lineup is locked", async () => {
+    vi.mocked(assertLineupEditable).mockRejectedValue(new Error("Lineup locked: GW 1 is in progress — lineups reopen once it's fully scored."))
+    mockSupabase = createMockSupabase({
+      tables: { roster_entries: { data: { team_id: "t1", slot_type: "starting" } } },
+    })
+    const res = await callAction("set-captain", { entry_id: "e1", role: "captain" })
+    expect(res.status).toBe(409)
+  })
+
+  it("bypasses the lock when assertLineupEditable resolves (e.g. AM/admin override)", async () => {
+    // assertLineupEditable itself owns the AM/admin bypass logic (see
+    // src/lib/lineup-lock.ts) — from the route's perspective, "resolves"
+    // covers both "unlocked" and "locked but caller may override" the same
+    // way, so this just confirms the route doesn't add its own redundant gate.
+    vi.mocked(assertLineupEditable).mockResolvedValue(undefined)
+    mockSupabase = createMockSupabase({
+      tables: {
+        roster_entries: [
+          { data: { team_id: "t1", slot_type: "starting" } },
+          { data: null },
+          { data: null },
+          { data: [{ id: "e1", base_price: 5, is_captain: true, is_vice_captain: false }] },
+        ],
+      },
+    })
+    const res = await callAction("set-captain", { entry_id: "e1", role: "captain" })
+    expect(res.status).toBe(200)
   })
 })
 
@@ -209,5 +244,38 @@ describe("POST /api/team/swap", () => {
     expect(res.status).toBe(400)
     const body = await res.json()
     expect(body.error).toBe("Starting XI is already full.")
+  })
+
+  it("409s when the lineup is locked", async () => {
+    vi.mocked(assertLineupEditable).mockRejectedValue(new Error("Lineup locked: GW 1 is in progress — lineups reopen once it's fully scored."))
+    mockSupabase = createMockSupabase({
+      tables: { roster_entries: { data: { id: "e1", slot_type: "bench", team_id: "t1", player_id: 99 } } },
+    })
+    const res = await callAction("swap", { entry_id: "e1", target_slot: "starting" })
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toMatch(/Lineup locked/)
+  })
+})
+
+describe("POST /api/team/mark-drop", () => {
+  it("409s when the lineup is locked (checked before the auction lookup)", async () => {
+    vi.mocked(assertLineupEditable).mockRejectedValue(new Error("Lineup locked: GW 1 is in progress — lineups reopen once it's fully scored."))
+    mockSupabase = createMockSupabase({
+      tables: { roster_entries: { data: { id: "e1", slot_type: "bench", team_id: "t1", base_price: 5, player: { position: "FWD", base_price: 5 } } } },
+    })
+    const res = await callAction("mark-drop", { entry_id: "e1" })
+    expect(res.status).toBe(409)
+  })
+})
+
+describe("POST /api/team/return-from-drop", () => {
+  it("409s when the lineup is locked (checked before the auction lookup)", async () => {
+    vi.mocked(assertLineupEditable).mockRejectedValue(new Error("Lineup locked: GW 1 is in progress — lineups reopen once it's fully scored."))
+    mockSupabase = createMockSupabase({
+      tables: { roster_entries: { data: { team_id: "t1", player_id: 99, slot_type: "dropped", player: { position: "FWD" } } } },
+    })
+    const res = await callAction("return-from-drop", { entry_id: "e1" })
+    expect(res.status).toBe(409)
   })
 })

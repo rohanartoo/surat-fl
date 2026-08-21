@@ -3,6 +3,7 @@ import type { Position, GameweekStatBreakdown } from "@/types"
 import { validateFormation, POSITION_ORDER } from "@/lib/auction-engine"
 import { fetchFplLive } from "@/lib/fpl"
 import type { FplLiveStats } from "@/lib/fpl"
+import { isGameweekFinalized } from "@/lib/lineup-lock"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any
 
@@ -162,7 +163,18 @@ export async function syncGameweekPoints(
   gw: number,
   supabase: SupabaseClient,
   opts: { preserveRoster?: boolean; gwFinished?: boolean } = {},
-): Promise<{ synced: number; teams: number; preservedRoster?: boolean }> {
+): Promise<{ synced: number; teams: number; preservedRoster?: boolean; finalized?: boolean }> {
+  // Belt-and-braces: a finalized gameweek's roster can never be rebuilt, no
+  // matter what the caller passed. Callers (the cron, /api/scoring/sync)
+  // are expected to compute this themselves too — see their own comments —
+  // since preserveRoster also gates applyDropPenalties there, which this
+  // internal flip alone wouldn't protect.
+  let preserveRoster = opts.preserveRoster
+  if (!preserveRoster && await isGameweekFinalized(gw, supabase)) {
+    console.warn(`[syncGameweekPoints] GW ${gw} is already finalized — forcing preserveRoster to protect the recorded roster.`)
+    preserveRoster = true
+  }
+
   const liveStats = await fetchFplLive(gw)
 
   // Re-scoring a finished gameweek: refresh the points on the rows already
@@ -172,7 +184,7 @@ export async function syncGameweekPoints(
   // whoever holds the slot now. gameweek_points is the historical record of
   // who actually played that week, so only `points` may move — which is what
   // FPL bonus/appeal adjustments actually change.
-  if (opts.preserveRoster) {
+  if (preserveRoster) {
     const { data: existing } = await supabase
       .from("gameweek_points")
       .select("id, player_id, is_captain")
@@ -330,7 +342,19 @@ export async function syncGameweekPoints(
     if (insertErr) throw new Error(`syncGameweekPoints insert: ${insertErr.message}`)
   }
 
-  return { synced: rows.length, teams: teams.length }
+  // This is the run that resolved auto-subs and the captain->VC fallback —
+  // the roster this gameweek scored against is now permanent. Mark it
+  // finalized so no later sync (even one that forgets to pass
+  // preserveRoster) can ever rebuild it from a since-changed roster, and so
+  // src/lib/lineup-lock.ts can lift the deadline lock for it.
+  if (opts.gwFinished) {
+    const { error: finalizeErr } = await supabase
+      .from("gameweek_scoring_status")
+      .upsert({ gameweek: gw, finalized_by: "sync" }, { onConflict: "gameweek", ignoreDuplicates: true })
+    if (finalizeErr) throw new Error(`syncGameweekPoints finalize: ${finalizeErr.message}`)
+  }
+
+  return { synced: rows.length, teams: teams.length, finalized: !!opts.gwFinished }
 }
 
 // =============================================
