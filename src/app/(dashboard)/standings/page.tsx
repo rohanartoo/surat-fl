@@ -1,6 +1,7 @@
+import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
-import { getProfile } from "@/lib/roles"
-import { getStandings } from "@/lib/scoring"
+import { getProfile, requireRole } from "@/lib/roles"
+import { getStandings, runManualGameweekSync } from "@/lib/scoring"
 import { StandingsTable } from "@/components/standings/StandingsTable"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,13 +12,26 @@ async function SyncForm() {
     <form
       action={async (data: FormData) => {
         "use server"
+        // Calls the shared sync logic directly rather than making a
+        // self-referential fetch back into this app's own /api/scoring/sync
+        // route — that fetch used `${process.env.NEXT_PUBLIC_SITE_URL}/...`,
+        // which threw "Failed to parse URL from undefined/..." in production
+        // whenever that env var wasn't set, taking this whole page down with
+        // a generic Server Action error. requireRole checks the caller is
+        // admin via the cookie session, but the actual sync runs on a
+        // service-role client — gameweek_scoring_status's write policy is
+        // service_role-only (see its migration), and syncGameweekPoints
+        // writes there once a gameweek is finalized, so the cookie-session
+        // client isn't sufficient here even though it can write
+        // gameweek_points directly.
+        await requireRole("admin")
         const gw = parseInt(data.get("gameweek") as string, 10)
         if (!Number.isInteger(gw)) return
-        await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/scoring/sync`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ gameweek: gw }),
-        })
+        const supabase = createServiceClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY!
+        )
+        await runManualGameweekSync(gw, supabase)
       }}
       className="flex gap-2 items-end"
     >

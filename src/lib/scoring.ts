@@ -1,7 +1,7 @@
 import { SQUAD_RULES } from "@/types"
 import type { Position, GameweekStatBreakdown } from "@/types"
 import { validateFormation, POSITION_ORDER } from "@/lib/auction-engine"
-import { fetchFplLive } from "@/lib/fpl"
+import { fetchFplLive, fetchFplBootstrap } from "@/lib/fpl"
 import type { FplLiveStats } from "@/lib/fpl"
 import { isGameweekFinalized } from "@/lib/lineup-lock"
 import { computePointsBreakdown, type PointsBreakdownLine } from "@/lib/points-breakdown"
@@ -379,6 +379,61 @@ export async function applyDropPenalties(
   const { data, error } = await supabase.rpc("rpc_apply_drop_penalties", { p_gameweek: gw })
   if (error) throw new Error(`applyDropPenalties: ${error.message}`)
   return { penaltyRows: (data as number) ?? 0 }
+}
+
+/**
+ * The manual/admin "sync this gameweek now" flow — shared by the
+ * /api/scoring/sync route (SYNC_SECRET bearer or admin session over HTTP)
+ * and the Standings page's admin sync form, which calls this directly
+ * rather than making a self-referential HTTP request back into the app (a
+ * fetch to `${NEXT_PUBLIC_SITE_URL}/api/...` that breaks outright if that
+ * env var is ever unset in production — exactly what happened before this
+ * was extracted).
+ *
+ * `finalize: true` is the manual escape hatch for a gameweek that would
+ * otherwise never finalize on its own (e.g. a fixture postponed out of its
+ * gameweek entirely, so FPL never marks it finished) — see the wedge risk
+ * noted in src/lib/lineup-lock.ts.
+ */
+export async function runManualGameweekSync(
+  gw: number,
+  supabase: SupabaseClient,
+  opts: { finalize?: boolean } = {},
+): Promise<{ gameweek: number; penaltyRows: number } & Awaited<ReturnType<typeof syncGameweekPoints>>> {
+  if (opts.finalize === true) {
+    const { error: finalizeErr } = await supabase
+      .from("gameweek_scoring_status")
+      .upsert({ gameweek: gw, finalized_by: "manual" }, { onConflict: "gameweek", ignoreDuplicates: true })
+    if (finalizeErr) throw new Error(`runManualGameweekSync finalize: ${finalizeErr.message}`)
+  }
+
+  // Only the live gameweek is rebuilt from current squads. For any earlier
+  // gameweek, refresh points on the rows already recorded for it so that
+  // transfers and mid-season auctions cannot rewrite past results. Fails
+  // safe: if FPL reports no active gameweek (pre-season, between seasons, or
+  // a bootstrap hiccup) every gameweek counts as past, so a stray manual
+  // sync can never rebuild history from current squads. Also preserved once
+  // a gameweek is finalized (see gameweek_scoring_status) — computed here,
+  // not left to syncGameweekPoints's internal safety net, because
+  // preserveRoster also gates the drop-penalty application below.
+  const bootstrap = await fetchFplBootstrap()
+  const currentEvent = bootstrap.events.find(e => e.is_current) ?? null
+  const preserveRoster =
+    currentEvent === null || gw !== currentEvent.id || await isGameweekFinalized(gw, supabase)
+
+  const pointsResult = await syncGameweekPoints(gw, supabase, {
+    preserveRoster,
+    gwFinished: currentEvent?.finished,
+  })
+  // A pending drop penalty must only ever attach to the live/next gameweek
+  // actually being scored for the first time — not to a preserveRoster
+  // re-sync of an older GW (e.g. refreshing a past GW after an FPL bonus
+  // correction), which would permanently steal a penalty meant for later.
+  const penaltyResult = preserveRoster
+    ? { penaltyRows: 0 }
+    : await applyDropPenalties(gw, supabase)
+
+  return { gameweek: gw, ...pointsResult, ...penaltyResult }
 }
 
 // =============================================
