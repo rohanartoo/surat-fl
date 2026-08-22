@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { cn } from "@/lib/utils"
 import type { StandingRow } from "@/lib/scoring"
 
@@ -78,7 +79,9 @@ export function StandingsTable({ standings, gameweeks, myTeamId }: Props) {
                   <div className="flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: row.color }} />
                     <div>
-                      <p className="font-medium leading-none">{row.display_name}</p>
+                      <Link href={`/team/${row.team_id}`} className="font-medium leading-none hover:underline">
+                        {row.display_name}
+                      </Link>
                       <p className="text-xs text-muted-foreground mt-0.5">{row.short_name}</p>
                     </div>
                   </div>

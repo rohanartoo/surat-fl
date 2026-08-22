@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
-import type { FplBootstrap, FplPlayer, FplFixture } from "@/types"
+import type { FplBootstrap, FplPlayer, FplFixture, FplExplainFixture } from "@/types"
 import { positionLabel } from "@/lib/utils"
 
 const FPL_BASE = "https://fantasy.premierleague.com/api"
@@ -18,6 +18,18 @@ export interface FplLiveStats {
   red_cards: number
   saves: number
   bonus: number
+  // Raw defensive-actions count — see the matching comment on
+  // GameweekStatBreakdown.defensive_contribution (src/types/index.ts).
+  // Optional here too so existing test fixtures/call sites that predate
+  // this field don't all need updating for an unrelated stat.
+  defensive_contribution?: number
+  // FPL's own pre-computed points breakdown — see FplExplainFixture and
+  // src/lib/points-breakdown.ts. Lives alongside `stats` (not inside it) in
+  // FPL's raw response, merged in here so the whole thing can be stored
+  // as-is into gameweek_points.stat_breakdown. Optional so existing test
+  // fixtures/call sites unrelated to the breakdown feature don't all need
+  // updating.
+  explain?: FplExplainFixture[]
 }
 
 export async function fetchFplLive(gw: number): Promise<Record<number, FplLiveStats>> {
@@ -26,8 +38,8 @@ export async function fetchFplLive(gw: number): Promise<Record<number, FplLiveSt
     cache: "no-store",
   })
   if (!res.ok) throw new Error(`FPL live API error: ${res.status}`)
-  const data: { elements: { id: number; stats: FplLiveStats }[] } = await res.json()
-  return Object.fromEntries(data.elements.map(e => [e.id, e.stats]))
+  const data: { elements: { id: number; stats: Omit<FplLiveStats, "explain">; explain: FplExplainFixture[] }[] } = await res.json()
+  return Object.fromEntries(data.elements.map(e => [e.id, { ...e.stats, explain: e.explain }]))
 }
 
 export async function fetchFplBootstrap(): Promise<FplBootstrap> {

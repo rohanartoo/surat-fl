@@ -4,6 +4,7 @@ import { validateFormation, POSITION_ORDER } from "@/lib/auction-engine"
 import { fetchFplLive } from "@/lib/fpl"
 import type { FplLiveStats } from "@/lib/fpl"
 import { isGameweekFinalized } from "@/lib/lineup-lock"
+import { computePointsBreakdown, type PointsBreakdownLine } from "@/lib/points-breakdown"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any
 
@@ -582,6 +583,11 @@ export interface TeamGameweekPlayerPerformance {
   was_subbed_in: boolean
   is_captain: boolean
   stat_breakdown: GameweekStatBreakdown | null
+  // FPL's own pre-computed points breakdown, unpacked from stat_breakdown.explain
+  // (src/lib/points-breakdown.ts). Null/empty when stat_breakdown itself is
+  // null, or for a row synced before `explain` was captured — callers
+  // should fall back to a category-only display in that case, not fail.
+  points_breakdown: PointsBreakdownLine[] | null
   subbed_out_player_id: number | null
   subbed_out_web_name: string | null
   slot_type: "starting" | "bench"
@@ -664,6 +670,7 @@ export async function getTeamGameweekPerformance(
       was_subbed_in: r.was_subbed_in,
       is_captain: r.is_captain,
       stat_breakdown: r.stat_breakdown,
+      points_breakdown: r.stat_breakdown ? computePointsBreakdown(r.stat_breakdown) : null,
       subbed_out_player_id: r.subbed_out_player_id,
       subbed_out_web_name: r.subbed_out_player_id != null ? subbedOutNames[r.subbed_out_player_id] ?? null : null,
       // Rows synced before this column existed have no slot_type — treat as starting

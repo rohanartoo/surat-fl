@@ -86,6 +86,24 @@ export interface FplBootstrap {
   events: FplEvent[]
 }
 
+/**
+ * One line of FPL's own pre-computed points breakdown (from the live
+ * event/{gw}/live/ endpoint's per-element `explain` array) — e.g.
+ * { identifier: "clean_sheets", points: 4, value: 1 }. This is FPL's own
+ * arithmetic, not a value this app derives — see src/lib/points-breakdown.ts.
+ */
+export interface FplExplainStat {
+  identifier: string
+  points: number
+  value: number
+  points_modification: number
+}
+
+export interface FplExplainFixture {
+  fixture: number
+  stats: FplExplainStat[]
+}
+
 export interface FplTeam {
   id: number
   name: string
@@ -277,6 +295,19 @@ export interface GameweekStatBreakdown {
   red_cards: number
   saves: number
   bonus: number
+  // Raw defensive-actions count FPL uses for its defensive-contribution
+  // bonus (DEF: clearances+blocks+interceptions + tackles; MID/FWD: same
+  // plus recoveries; GKP: always 0) — kept for a possible future "defensive
+  // stats" display; NOT read by src/lib/points-breakdown.ts, which uses
+  // `explain` below instead. Optional: rows synced before this field existed
+  // won't have it.
+  defensive_contribution?: number
+  // FPL's own pre-computed points breakdown for this player this gameweek —
+  // see FplExplainFixture. This is what src/lib/points-breakdown.ts actually
+  // renders; nothing in this app re-derives point values from the raw
+  // counts above. Optional: rows synced before this field existed won't
+  // have it, and the breakdown UI falls back to a category-only display.
+  explain?: FplExplainFixture[]
 }
 
 export interface GameweekPoints {

@@ -18,7 +18,17 @@ import { SQUAD_RULES } from "@/types"
 
 const SEASON_LENGTH = 38
 
-const STAT_LABELS: { key: keyof NonNullable<TeamGameweekPerformance["starting"][number]["stat_breakdown"]>; label: string }[] = [
+// Fallback-only now (see PlayerPointsRow) — used when a player has a
+// stat_breakdown but no points_breakdown (old data synced before that field
+// existed, or a same-render FPL scoring-rules fetch failure). Narrowed to
+// the specific known numeric keys rather than `keyof GameweekStatBreakdown`
+// so adding an optional field there (e.g. defensive_contribution) doesn't
+// widen this indexing to a possibly-undefined lookup.
+const STAT_LABELS: {
+  key: "goals_scored" | "assists" | "clean_sheets" | "goals_conceded" | "own_goals"
+     | "penalties_saved" | "penalties_missed" | "saves" | "bonus" | "yellow_cards" | "red_cards"
+  label: string
+}[] = [
   { key: "goals_scored", label: "Goals" },
   { key: "assists", label: "Assists" },
   { key: "clean_sheets", label: "Clean sheet" },
@@ -167,13 +177,25 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
   )
 }
 
+function formatSigned(n: number): string {
+  return n > 0 ? `+${n}` : `${n}`
+}
+
 function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting"][number] }) {
   const breakdown = player.stat_breakdown
-  const activeStats = breakdown
-    ? STAT_LABELS.filter(({ key }) => {
-        const value = breakdown[key]
-        return key === "clean_sheets" ? value > 0 : (value as number) > 0
-      })
+  // points_breakdown sums to stat_breakdown.total_points — the player's own
+  // RAW points, before captain doubling. player.points is the doubled value
+  // actually displayed, so a captain needs an explicit extra line or the
+  // tooltip's own numbers wouldn't visibly add up to the number shown.
+  const pointsBreakdown = player.points_breakdown
+  const breakdownSum = pointsBreakdown?.reduce((s, l) => s + l.points, 0) ?? 0
+  const captainBonus = player.is_captain && pointsBreakdown ? player.points - breakdownSum : 0
+
+  // Fallback path — stat_breakdown exists but has no `explain` (a row
+  // synced before that field was captured): fall back to the old
+  // category-only display rather than showing nothing.
+  const activeStats = !pointsBreakdown && breakdown
+    ? STAT_LABELS.filter(({ key }) => breakdown[key] > 0)
     : []
 
   const pointsEl = (
@@ -217,7 +239,26 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting
         <Tooltip>
           <TooltipTrigger asChild>{pointsEl}</TooltipTrigger>
           <TooltipContent side="left" className="text-xs">
-            {activeStats.length > 0
+            {pointsBreakdown ? (
+              pointsBreakdown.length > 0 ? (
+                <div className="space-y-0.5 min-w-[9rem]">
+                  {pointsBreakdown.map(line => (
+                    <div key={line.label} className="flex items-center justify-between gap-4">
+                      <span>{line.label}</span>
+                      <span className={cn("font-mono", line.points < 0 ? "text-rose-400" : "text-emerald-400")}>
+                        {formatSigned(line.points)}
+                      </span>
+                    </div>
+                  ))}
+                  {captainBonus !== 0 && (
+                    <div className="flex items-center justify-between gap-4 pt-0.5 border-t border-border/40 mt-1">
+                      <span>×2 Captain bonus</span>
+                      <span className="font-mono text-emerald-400">{formatSigned(captainBonus)}</span>
+                    </div>
+                  )}
+                </div>
+              ) : "Did not play"
+            ) : activeStats.length > 0
               ? activeStats.map(({ key, label }) => `${label}${breakdown[key] > 1 ? ` ×${breakdown[key]}` : ""}`).join(" · ")
               : breakdown.minutes > 0 ? `${breakdown.minutes} mins` : "Did not play"}
           </TooltipContent>

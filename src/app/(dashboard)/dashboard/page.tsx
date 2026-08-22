@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { createClient } from "@/lib/supabase/server"
 import { getProfile } from "@/lib/roles"
 import { getStandings, getLastSyncedGameweek, getGameweekHighlights } from "@/lib/scoring"
@@ -74,9 +75,12 @@ export default async function DashboardPage() {
                         style={{ backgroundColor: highlights.topTeam.color }}
                       />
                       <div>
-                        <p className="text-lg font-semibold leading-tight">
+                        <Link
+                          href={`/team/${highlights.topTeam.team_id}`}
+                          className="text-lg font-semibold leading-tight hover:underline"
+                        >
                           {highlights.topTeam.display_name}
-                        </p>
+                        </Link>
                         <p className="text-xs text-muted-foreground">{highlights.topTeam.short_name}</p>
                       </div>
                     </div>
