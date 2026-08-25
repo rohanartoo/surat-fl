@@ -256,6 +256,11 @@ export async function syncGameweekPoints(
     subbed_out_player_id: number | null
     slot_type: "starting" | "bench"
     counted: boolean
+    // Snapshot of the bench priority this gameweek actually scored against —
+    // the input applyAutoSubs used. roster_entries.bench_order moves as soon
+    // as the team reshuffles for the next gameweek, so without recording it
+    // here a past gameweek's substitution order becomes unexplainable.
+    bench_order: number | null
   }[] = []
 
   for (const team of teams as { id: string }[]) {
@@ -310,6 +315,7 @@ export async function syncGameweekPoints(
         subbed_out_player_id: subbedOutPlayerId ?? null,
         slot_type: entry.slot_type,
         counted: true,
+        bench_order: entry.bench_order,
       })
     }
 
@@ -330,6 +336,7 @@ export async function syncGameweekPoints(
         subbed_out_player_id: null,
         slot_type: entry.slot_type,
         counted: false,
+        bench_order: entry.bench_order,
       })
     }
   }
@@ -647,6 +654,12 @@ export interface TeamGameweekPlayerPerformance {
   subbed_out_web_name: string | null
   slot_type: "starting" | "bench"
   counted: boolean
+  /**
+   * Bench priority (1–4) as it stood when this gameweek was scored. Null for
+   * starting-XI rows, and for every row of a gameweek scored before the
+   * column existed — callers must fall back rather than render a blank pip.
+   */
+  bench_order: number | null
 }
 
 export interface TeamGameweekPerformance {
@@ -675,7 +688,7 @@ export async function getTeamGameweekPerformance(
       // gameweek_points has two FKs to players (player_id, subbed_out_player_id) —
       // the embed must be disambiguated or PostgREST errors with "more than one
       // relationship was found" and silently returns no data.
-      .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, slot_type, counted, player:players!gameweek_points_player_id_fkey(web_name, position)")
+      .select("player_id, points, was_subbed_in, is_captain, stat_breakdown, subbed_out_player_id, slot_type, counted, bench_order, player:players!gameweek_points_player_id_fkey(web_name, position)")
       .eq("team_id", teamId)
       .eq("gameweek", gw)
       .not("player_id", "is", null),
@@ -699,6 +712,7 @@ export async function getTeamGameweekPerformance(
     subbed_out_player_id: number | null
     slot_type: "starting" | "bench" | null
     counted: boolean
+    bench_order: number | null
     player: { web_name: string; position: Position } | null
   }
   const rows = (data ?? []) as Row[]
@@ -732,11 +746,19 @@ export async function getTeamGameweekPerformance(
       // since only effective-XI rows were ever written back then.
       slot_type: r.slot_type ?? "starting",
       counted: r.counted,
+      bench_order: r.bench_order,
     }))
     .sort((a, b) => POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position))
 
   const starting = players.filter(p => p.slot_type === "starting")
-  const bench = players.filter(p => p.slot_type === "bench")
+  // Bench is ordered by the priority this gameweek actually scored against,
+  // so it reads the same way round as the roster view's bench. Gameweeks
+  // scored before bench_order was recorded have null throughout and keep the
+  // position ordering from the sort above — `?? Infinity` would otherwise
+  // scramble a partially-null set, but a gameweek is all-or-nothing here.
+  const bench = players
+    .filter(p => p.slot_type === "bench")
+    .sort((a, b) => (a.bench_order ?? Number.MAX_SAFE_INTEGER) - (b.bench_order ?? Number.MAX_SAFE_INTEGER))
   const team_total = players.filter(p => p.counted).reduce((s, p) => s + p.points, 0) + (points_penalty ?? 0)
 
   return { gameweek: gw, team_total, points_penalty, starting, bench }

@@ -536,3 +536,80 @@ describe("syncGameweekPoints", () => {
     expect(queriedTables).not.toContain("teams")
   })
 })
+
+// ─── getTeamGameweekPerformance: bench ordering ───────────────────────────────
+
+/**
+ * The bench is ordered by the priority the gameweek actually scored against
+ * (gameweek_points.bench_order), so it reads the same way round as the
+ * roster view. Gameweeks scored before that column existed have null
+ * throughout and must fall back cleanly rather than scrambling.
+ */
+function makePerfSupabase(rows: unknown[]) {
+  const chain = (data: unknown) => {
+    const c = Promise.resolve({ data, error: null }) as Promise<{ data: unknown; error: null }> & Record<string, unknown>
+    c.eq = () => chain(data)
+    c.not = () => chain(data)
+    c.in = () => chain(data)
+    return c
+  }
+  return {
+    from: (table: string) => ({
+      select: () => chain(
+        table === "gameweek_points" ? rows
+        : table === "team_transfer_records" ? []
+        : [],
+      ),
+    }),
+  }
+}
+
+const benchRow = (player_id: number, web_name: string, position: Position, bench_order: number | null) => ({
+  player_id, points: 0, was_subbed_in: false, is_captain: false, stat_breakdown: null,
+  subbed_out_player_id: null, slot_type: "bench" as const, counted: false, bench_order,
+  player: { web_name, position },
+})
+
+describe("getTeamGameweekPerformance bench ordering", () => {
+  it("orders the bench by recorded bench_order, not by position", async () => {
+    // Deliberately supplied in position order (GK, DEF, MID, FWD) with a
+    // bench priority that disagrees — if position won, this would come back
+    // unchanged and the two team-page panels would disagree again.
+    const supabase = makePerfSupabase([
+      benchRow(1, "Keeper", "GK", 4),
+      benchRow(2, "Backer", "DEF", 3),
+      benchRow(3, "Middle", "MID", 2),
+      benchRow(4, "Striker", "FWD", 1),
+    ])
+    const { getTeamGameweekPerformance } = await import("@/lib/scoring")
+    const res = await getTeamGameweekPerformance("t1", 5, supabase)
+    expect(res.bench.map(p => p.web_name)).toEqual(["Striker", "Middle", "Backer", "Keeper"])
+    expect(res.bench.map(p => p.bench_order)).toEqual([1, 2, 3, 4])
+  })
+
+  it("falls back to position order when bench_order is null throughout (a gameweek scored before the column existed)", async () => {
+    const supabase = makePerfSupabase([
+      benchRow(4, "Striker", "FWD", null),
+      benchRow(1, "Keeper", "GK", null),
+      benchRow(3, "Middle", "MID", null),
+      benchRow(2, "Backer", "DEF", null),
+    ])
+    const { getTeamGameweekPerformance } = await import("@/lib/scoring")
+    const res = await getTeamGameweekPerformance("t1", 1, supabase)
+    // GK → DEF → MID → FWD, i.e. the pre-existing behaviour preserved.
+    expect(res.bench.map(p => p.web_name)).toEqual(["Keeper", "Backer", "Middle", "Striker"])
+    // Null must survive to the UI so it can omit the pip rather than invent one.
+    expect(res.bench.every(p => p.bench_order === null)).toBe(true)
+  })
+
+  it("keeps numbered bench players ahead of unnumbered ones rather than interleaving", async () => {
+    const supabase = makePerfSupabase([
+      benchRow(1, "Unknown", "GK", null),
+      benchRow(2, "Second", "DEF", 2),
+      benchRow(3, "First", "MID", 1),
+    ])
+    const { getTeamGameweekPerformance } = await import("@/lib/scoring")
+    const res = await getTeamGameweekPerformance("t1", 5, supabase)
+    expect(res.bench.map(p => p.web_name)).toEqual(["First", "Second", "Unknown"])
+  })
+})

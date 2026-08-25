@@ -175,7 +175,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData,
                       <PlayerPointsRow key={p.player_id} player={p} blanked={blankedIds.has(p.player_id)} />
                     )))}
               bench={data!.bench.map(p => (
-                <PlayerPointsRow key={p.player_id} player={p} blanked={false} />
+                <PlayerPointsRow key={p.player_id} player={p} blanked={false} showBenchNumber />
               ))}
               footer={
                 (autoSubs.length > 0 || blankedIds.size > 0) && (
@@ -216,10 +216,15 @@ function formatSigned(n: number): string {
 function PlayerPointsRow({
   player,
   blanked,
+  showBenchNumber,
 }: {
   player: TeamGameweekPerformance["starting"][number]
   /** Counted starter who played 0 minutes — see blankedIds above. */
   blanked: boolean
+  /** Bench rows only. The pip is still omitted when bench_order is null
+   *  (a gameweek scored before it was recorded) rather than showing a
+   *  placeholder the data can't back up. */
+  showBenchNumber?: boolean
 }) {
   const breakdown = player.stat_breakdown
   // points_breakdown sums to stat_breakdown.total_points — the player's own
@@ -247,6 +252,7 @@ function PlayerPointsRow({
       position={player.position}
       name={player.web_name}
       value={player.points}
+      benchNumber={showBenchNumber ? player.bench_order ?? undefined : undefined}
       title={breakdown ? undefined : "No stats recorded"}
       className={cn(
         player.is_captain && "bg-amber-500/10",
