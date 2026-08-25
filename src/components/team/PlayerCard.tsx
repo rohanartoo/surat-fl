@@ -3,7 +3,6 @@
 import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { MoreVertical } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,55 +60,50 @@ export function PlayerCard({
     : entry.player.fpl_team_short
 
   return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className="relative"
-    >
-      <PitchSlot
-        position={entry.player.position}
-        name={entry.player.web_name}
-        subtitle={subtitle}
-        value={formatMoney(entry.base_price)}
-        benchNumber={benchNumber}
-        onClick={canEdit ? onSelect : undefined}
-        // The whole card is the drag handle now — a pitch slot is too small
-        // to carry a separate grip target the way the old list row did.
-        handleProps={canEdit ? { ...attributes, ...listeners } : undefined}
-        className={cn(
-          isDragging && "opacity-40",
-          isSelected && "!border-primary ring-1 ring-primary/60",
-          isEligible && "!border-emerald-500 ring-1 ring-emerald-500/60",
-          dimmed && "opacity-40",
-          // `manipulation`, NOT `none`: it still suppresses the 300ms
-          // double-tap-zoom delay so tap-to-swap feels instant, but leaves
-          // scrolling intact. `none` here made the whole squad area
-          // unscrollable on a phone, since the pitch fills the viewport.
-          canEdit && "touch-manipulation select-none",
-        )}
-        topRight={
-          <>
-            {entry.is_captain && (
-              <Badge variant="secondary" className="h-3.5 border-0 bg-amber-500/20 px-1 py-0 text-[9px] uppercase text-amber-600">C</Badge>
-            )}
-            {entry.is_vice_captain && (
-              <Badge variant="secondary" className="h-3.5 px-1 py-0 text-[9px] uppercase">VC</Badge>
-            )}
-          </>
-        }
-      />
-
-      {/* Actions sit outside PitchSlot so the dropdown trigger never inherits
-          the drag listeners — otherwise opening the menu starts a drag. */}
-      {canEdit && (
+    <PitchSlot
+      // The sortable ref/transform go on PitchSlot's own outer element rather
+      // than a wrapper around it: that element is the flex item the row
+      // sizes, and an extra shrink-wrapping wrapper would break the
+      // percentage width slots use to fit five across.
+      outerRef={setNodeRef}
+      outerStyle={{ transform: CSS.Transform.toString(transform), transition }}
+      position={entry.player.position}
+      name={entry.player.web_name}
+      subtitle={subtitle}
+      value={formatMoney(entry.base_price)}
+      benchNumber={benchNumber}
+      onClick={canEdit ? onSelect : undefined}
+      // The whole card is the drag handle now — a pitch slot is too small
+      // to carry a separate grip target the way the old list row did.
+      handleProps={canEdit ? { ...attributes, ...listeners } : undefined}
+      outerClassName={cn(isDragging && "opacity-40", dimmed && "opacity-40")}
+      className={cn(
+        isSelected && "!border-primary ring-1 ring-primary/60",
+        isEligible && "!border-emerald-500 ring-1 ring-emerald-500/60",
+        // `manipulation`, NOT `none`: it still suppresses the 300ms
+        // double-tap-zoom delay so tap-to-swap feels instant, but leaves
+        // scrolling intact. `none` here made the whole squad area
+        // unscrollable on a phone, since the pitch fills the viewport.
+        canEdit && "touch-manipulation select-none",
+      )}
+      // Pass undefined, not an empty fragment, when there's nothing to show —
+      // a fragment is always truthy and would render an empty corner pip on
+      // every card that isn't captain or vice-captain.
+      marker={
+        entry.is_captain ? <span className="text-[9px] font-bold uppercase leading-none text-amber-500">C</span>
+        : entry.is_vice_captain ? <span className="text-[9px] font-bold uppercase leading-none text-muted-foreground">VC</span>
+        : undefined
+      }
+      // Sits outside the card element so the dropdown trigger never inherits
+      // the drag listeners — otherwise opening the menu starts a drag.
+      actions={canEdit ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            {/* 32x32 tap target, mostly transparent padding around a small
+            {/* 32x32 tap target: mostly transparent padding around a small
                 visible dot. A bare 16px control is roughly a third of the
                 minimum comfortable touch target and was genuinely hard to
-                hit on a phone. Anchored just inside the slot's own bounds
-                rather than overhanging it, so the enlarged area can't steal
-                taps meant for the neighbouring card. */}
+                hit on a phone. Anchored inside the card's own bounds so the
+                enlarged area can't steal taps from the neighbouring card. */}
             <button
               type="button"
               aria-label={`Actions for ${entry.player.web_name}`}
@@ -135,8 +129,8 @@ export function PlayerCard({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      )}
-    </div>
+      ) : undefined}
+    />
   )
 }
 

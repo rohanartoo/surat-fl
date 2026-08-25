@@ -2,7 +2,6 @@
 
 import { useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import {
   Select,
   SelectContent,
@@ -261,18 +260,18 @@ function PlayerPointsRow({
         (subbedOut || (!player.counted && player.slot_type === "bench")) && "opacity-45",
         breakdown && "cursor-help",
       )}
-      topRight={
-        <>
-          {player.is_captain && (
-            <Badge variant="secondary" className="h-3.5 border-0 bg-amber-500/20 px-1 py-0 text-[9px] uppercase text-amber-600">
-              C ×2
-            </Badge>
-          )}
-          {player.was_subbed_in && <span className="text-[11px] font-bold leading-none text-emerald-500" title="Came on">↑</span>}
-          {subbedOut && <span className="text-[11px] font-bold leading-none text-rose-500" title="Subbed out">↓</span>}
-          {blanked && <span className="text-[11px] font-extrabold leading-none text-amber-500" title="Blanked — no substitute available">!</span>}
-        </>
-      }
+      // Built as an array so an all-empty result is undefined rather than a
+      // truthy fragment, which would draw an empty corner pip on every
+      // ordinary card.
+      marker={(() => {
+        const bits = [
+          player.is_captain && <span key="c" className="text-[9px] font-bold uppercase leading-none text-amber-500">C x2</span>,
+          player.was_subbed_in && <span key="i" title="Came on" className="text-[10px] font-bold leading-none text-emerald-500">↑</span>,
+          subbedOut && <span key="o" title="Subbed out" className="text-[10px] font-bold leading-none text-rose-500">↓</span>,
+          blanked && <span key="b" title="Blanked — no substitute available" className="text-[10px] font-extrabold leading-none text-amber-500">!</span>,
+        ].filter(Boolean)
+        return bits.length ? <>{bits}</> : undefined
+      })()}
     />
   )
 

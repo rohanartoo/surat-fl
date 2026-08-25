@@ -22,7 +22,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { PlayerCard, PlayerCardOverlay } from "./PlayerCard"
-import { Pitch, groupByPosition } from "./Pitch"
+import { Pitch, PitchSlotShell, groupByPosition } from "./Pitch"
 import { DroppedSection } from "./DroppedSection"
 import { TeamBudgetBar } from "./TeamBudgetBar"
 import { DeadlineBanner } from "./DeadlineBanner"
@@ -597,7 +597,7 @@ function EmptySlot({
 }: { id: string; label: string; index?: number; isEligible?: boolean; dimmed?: boolean; onSelect?: () => void }) {
   const { setNodeRef, isOver } = useDroppable({ id })
   return (
-    <div className="relative flex">
+    <PitchSlotShell>
       {index !== undefined && (
         <span className="absolute -left-1 -top-1 z-[2] flex h-4 w-4 items-center justify-center rounded-full border border-border/40 bg-card font-mono text-[9px] font-semibold text-muted-foreground">
           {index}
@@ -608,7 +608,7 @@ function EmptySlot({
         onClick={isEligible ? onSelect : undefined}
         title={label}
         className={cn(
-          "flex h-[4.6rem] w-[5.3rem] items-center justify-center rounded-[0.55rem] border border-dashed transition-colors max-[400px]:w-[4.6rem]",
+          "flex h-[4.6rem] w-full items-center justify-center rounded-[0.55rem] border border-dashed transition-colors",
           isOver || isEligible
             ? "cursor-pointer border-emerald-500/60 bg-emerald-500/10"
             : dimmed ? "border-border/20 opacity-30" : "border-border/30 opacity-60",
@@ -616,6 +616,6 @@ function EmptySlot({
       >
         <span className="px-1 text-center text-[9px] italic leading-tight text-muted-foreground/70">{label}</span>
       </div>
-    </div>
+    </PitchSlotShell>
   )
 }
