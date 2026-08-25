@@ -6,7 +6,8 @@ import {
   DragOverlay,
   closestCenter,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   useDroppable,
@@ -84,8 +85,19 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
   useEffect(() => { rosterRef.current = roster }, [roster])
   const isSavingRef = useRef(false)
 
+  // Mouse and touch are deliberately separate sensors rather than one
+  // PointerSensor. A pitch slot fills most of a phone screen, so if touch
+  // dragging activated on movement alone the card would need
+  // `touch-action: none` and a swipe starting anywhere on the squad would
+  // stop scrolling the page entirely. A delay instead disambiguates the two:
+  // a quick swipe scrolls, a press-and-hold starts a drag. tolerance lets a
+  // finger wobble slightly during the hold without cancelling it.
+  //
+  // Tap-to-swap (handleSelect) remains the primary touch interaction and
+  // needs none of this — dragging is the convenience path, not the only one.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
@@ -235,12 +247,23 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
     if (!selectedEntry) return new Set<string>()
     const oppositeSlot = selectedEntry.slot_type === "starting" ? "bench" : "starting"
     const candidates = roster.filter(e => e.slot_type === oppositeSlot)
-    if (!squadComplete) return new Set(candidates.map(c => c.id))
+
+    // Two bench players can always swap priority with each other: it's a pure
+    // reorder, so the Starting XI is untouched and no formation rule applies.
+    // This used to be reachable only by dragging, which meant bench priority
+    // — the thing that decides which substitute comes on — simply could not
+    // be changed on a touch device. handleSwap already supports it; only this
+    // eligibility calculation was excluding it.
+    const benchReorder = selectedEntry.slot_type === "bench"
+      ? roster.filter(e => e.slot_type === "bench" && e.id !== selectedEntry.id)
+      : []
+
+    if (!squadComplete) return new Set([...candidates, ...benchReorder].map(c => c.id))
 
     const counts: Record<Position, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 }
     for (const e of startingXI) counts[e.player.position]++
 
-    const eligible = new Set<string>()
+    const eligible = new Set<string>(benchReorder.map(c => c.id))
     for (const c of candidates) {
       // Whichever of the two is currently starting is the one that would
       // leave the XI; the other is the one that would enter it.

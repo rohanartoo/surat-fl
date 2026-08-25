@@ -81,7 +81,11 @@ export function PlayerCard({
           isSelected && "!border-primary ring-1 ring-primary/60",
           isEligible && "!border-emerald-500 ring-1 ring-emerald-500/60",
           dimmed && "opacity-40",
-          canEdit && "touch-none select-none",
+          // `manipulation`, NOT `none`: it still suppresses the 300ms
+          // double-tap-zoom delay so tap-to-swap feels instant, but leaves
+          // scrolling intact. `none` here made the whole squad area
+          // unscrollable on a phone, since the pitch fills the viewport.
+          canEdit && "touch-manipulation select-none",
         )}
         topRight={
           <>
@@ -100,14 +104,23 @@ export function PlayerCard({
       {canEdit && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
+            {/* 32x32 tap target, mostly transparent padding around a small
+                visible dot. A bare 16px control is roughly a third of the
+                minimum comfortable touch target and was genuinely hard to
+                hit on a phone. Anchored just inside the slot's own bounds
+                rather than overhanging it, so the enlarged area can't steal
+                taps meant for the neighbouring card. */}
             <button
               type="button"
               aria-label={`Actions for ${entry.player.web_name}`}
               onClick={e => e.stopPropagation()}
               onPointerDown={e => e.stopPropagation()}
-              className="absolute -right-1 -top-1 z-[2] flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground"
+              onTouchStart={e => e.stopPropagation()}
+              className="group absolute right-0 top-0 z-[2] flex h-8 w-8 items-start justify-end p-1 touch-manipulation"
             >
-              <MoreVertical className="h-2.5 w-2.5" />
+              <span className="flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card text-muted-foreground group-hover:text-foreground group-focus-visible:ring-1 group-focus-visible:ring-ring">
+                <MoreVertical className="h-2.5 w-2.5" />
+              </span>
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
