@@ -58,6 +58,17 @@
 
   /* Emerald accent for highlights */
   --emerald: oklch(0.696 0.17 162.48);
+
+  /* Pitch view (src/components/team/Pitch.tsx). The turf is deliberately a
+     LOW-chroma green derived from the emerald accent's hue (162) rather than
+     FPL's saturated green — at full chroma it fights every other surface in
+     this otherwise-zinc UI and stops reading as a background. */
+  --turf-top: oklch(0.895 0.045 162);
+  --turf-bottom: oklch(0.845 0.05 162);
+  --pitch-line: oklch(1 0 0 / 65%);
+  --pitch-slot: oklch(1 0 0 / 82%);
+  --pitch-slot-border: oklch(0.2 0.01 286 / 12%);
+  --bench-bg: oklch(0.92 0.008 286);
 }
 
 .dark {
@@ -80,6 +91,13 @@
   --border: oklch(1 0 0 / 15%);
   --input: oklch(1 0 0 / 18%);
   --ring: oklch(0.55 0.016 285.938);
+
+  --turf-top: oklch(0.255 0.033 162);
+  --turf-bottom: oklch(0.205 0.028 162);
+  --pitch-line: oklch(1 0 0 / 11%);
+  --pitch-slot: oklch(1 0 0 / 7%);
+  --pitch-slot-border: oklch(1 0 0 / 11%);
+  --bench-bg: oklch(0.17 0.006 286);
 }
 
 * {

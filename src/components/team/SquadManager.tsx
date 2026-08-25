@@ -16,15 +16,17 @@ import {
 import {
   SortableContext,
   sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
 } from "@dnd-kit/sortable"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { PlayerCard, PlayerCardOverlay } from "./PlayerCard"
+import { Pitch, groupByPosition } from "./Pitch"
 import { DroppedSection } from "./DroppedSection"
 import { TeamBudgetBar } from "./TeamBudgetBar"
 import { DeadlineBanner } from "./DeadlineBanner"
 import { validateFormation } from "@/lib/auction-engine"
+import { cn } from "@/lib/utils"
 import { SQUAD_RULES } from "@/types"
 import type { RosterEntry, Player, Position, DropQuotaSummary } from "@/types"
 import type { LineupLockState } from "@/lib/lineup-lock"
@@ -96,6 +98,19 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
   const bench = roster.filter(e => e.slot_type === "bench")
     .sort((a, b) => (a.bench_order ?? 99) - (b.bench_order ?? 99))
   const dropped = roster.filter(e => e.slot_type === "dropped")
+
+  // This view owns the canonical within-row ordering (most expensive first),
+  // and GameweekPerformance mirrors it via the same player ids — so a given
+  // position row never appears in two different orders across the two
+  // pitches. See buildRosterOrder's export below.
+  const startingRows = useMemo(
+    () => groupByPosition(
+      [...startingXI].sort((a, b) => b.base_price - a.base_price || a.player.web_name.localeCompare(b.player.web_name)),
+      e => e.player.position,
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [roster],
+  )
 
   const activeEntry = activeId ? roster.find(e => e.id === activeId) ?? null : null
 
@@ -423,91 +438,103 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
         <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{error}</p>
       )}
 
-      {/* Three columns, all starting at the same top edge: squad (Starting
-          XI + Bench), staged/dropped players, and whatever's passed as
-          children (the Gameweek Performance card). Collapses to fewer
-          columns on narrower screens instead of overflowing. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(320px,1.4fr)_minmax(260px,1fr)_360px] gap-6 items-start">
-        <div className="space-y-6 md:col-span-2 xl:col-span-1">
+      {/* Two pitches side by side on xl (roster | performance), stacking
+          below that — the old three-column grid can't fit two of them. The
+          dropped/staged card sits full-width underneath. */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+        <div className="space-y-6">
           <DndContext
+            // Explicit, stable id. Without one dnd-kit derives the
+            // aria-describedby id from an internal counter that isn't
+            // SSR-stable, so the server and client disagree and React logs a
+            // hydration mismatch. Harmless-looking, but it means React
+            // discards the server markup for this subtree.
+            id="squad-manager"
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            {/* Starting XI */}
+            {/* One SortableContext spanning the whole pitch: it's a React
+                context provider, so the previous two (one per section)
+                can't both wrap a single <Pitch> subtree. rectSortingStrategy
+                suits the grid shape; handleDragEnd derives everything from
+                the dragged/target entries' own slot_type, never from the
+                strategy's index maths, so nothing else has to change. */}
             <Card className="border-border/60">
-              <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                <CardTitle className="text-base">Starting XI</CardTitle>
-                <Badge variant="secondary" className="font-mono text-xs">{startingXI.length} / {SQUAD_RULES.starting}</Badge>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-base">Team Selection</CardTitle>
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {startingXI.length} / {SQUAD_RULES.starting} · {bench.length} / {SQUAD_RULES.bench}
+                </Badge>
               </CardHeader>
-              <CardContent className="space-y-0.5 px-3 pb-3">
-                <SortableContext items={startingXI.map(e => e.id)} strategy={verticalListSortingStrategy}>
-                  {startingXI.map(entry => (
-                    <PlayerCard
-                      key={entry.id}
-                      entry={entry}
-                      opponents={opponentsByTeam?.[entry.player.fpl_team]}
-                      canEdit={effectiveCanEdit}
-                      onSetCaptain={handleSetCaptain}
-                      onSetVC={handleSetVC}
-                      onMarkDrop={handleMarkDrop}
-                      isSelected={entry.id === selectedId}
-                      isEligible={eligiblePartnerIds.has(entry.id)}
-                      dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
-                      onSelect={() => handleSelect(entry.id)}
-                    />
-                  ))}
-                </SortableContext>
-                {Array.from({ length: Math.max(0, SQUAD_RULES.starting - startingXI.length) }).map((_, i) => (
-                  <EmptySlot
-                    key={`empty-start-${i}`}
-                    id={`empty-start-${i}`}
-                    label="Empty starting slot"
-                    isEligible={emptyStartEligible}
-                    dimmed={!!selectedId && !emptyStartEligible}
-                    onSelect={() => handleSelectEmpty("starting")}
+              <CardContent className="px-1 pb-1">
+                <SortableContext items={[...startingXI, ...bench].map(e => e.id)} strategy={rectSortingStrategy}>
+                  <Pitch
+                    rows={[
+                      ...startingRows.map(row =>
+                        row.map(entry => (
+                          <PlayerCard
+                            key={entry.id}
+                            entry={entry}
+                            opponents={opponentsByTeam?.[entry.player.fpl_team]}
+                            canEdit={effectiveCanEdit}
+                            onSetCaptain={handleSetCaptain}
+                            onSetVC={handleSetVC}
+                            onMarkDrop={handleMarkDrop}
+                            isSelected={entry.id === selectedId}
+                            isEligible={eligiblePartnerIds.has(entry.id)}
+                            dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
+                            onSelect={() => handleSelect(entry.id)}
+                          />
+                        )),
+                      ),
+                      // Empty starting slots have no known position, so they
+                      // land in a trailing row beneath the FWD line.
+                      Array.from({ length: Math.max(0, SQUAD_RULES.starting - startingXI.length) }).map((_, i) => (
+                        <EmptySlot
+                          key={`empty-start-${i}`}
+                          id={`empty-start-${i}`}
+                          label="Empty starting slot"
+                          isEligible={emptyStartEligible}
+                          dimmed={!!selectedId && !emptyStartEligible}
+                          onSelect={() => handleSelectEmpty("starting")}
+                        />
+                      )),
+                    ]}
+                    bench={
+                      <>
+                        {bench.map((entry, i) => (
+                          <PlayerCard
+                            key={entry.id}
+                            entry={entry}
+                            opponents={opponentsByTeam?.[entry.player.fpl_team]}
+                            benchNumber={entry.bench_order ?? i + 1}
+                            canEdit={effectiveCanEdit}
+                            onSetCaptain={handleSetCaptain}
+                            onSetVC={handleSetVC}
+                            onMarkDrop={handleMarkDrop}
+                            isSelected={entry.id === selectedId}
+                            isEligible={eligiblePartnerIds.has(entry.id)}
+                            dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
+                            onSelect={() => handleSelect(entry.id)}
+                          />
+                        ))}
+                        {Array.from({ length: emptyBenchSlots }).map((_, i) => (
+                          <EmptySlot
+                            key={`empty-bench-${i}`}
+                            id={`empty-bench-${bench.length + i + 1}`}
+                            label="Empty bench slot"
+                            index={bench.length + i + 1}
+                            isEligible={emptyBenchEligible}
+                            dimmed={!!selectedId && !emptyBenchEligible}
+                            onSelect={() => handleSelectEmpty("bench", bench.length + i + 1)}
+                          />
+                        ))}
+                      </>
+                    }
                   />
-                ))}
-              </CardContent>
-            </Card>
-
-            {/* Bench */}
-            <Card className="border-border/60">
-              <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                <CardTitle className="text-base">Bench</CardTitle>
-                <Badge variant="secondary" className="font-mono text-xs">{bench.length} / {SQUAD_RULES.bench}</Badge>
-              </CardHeader>
-              <CardContent className="space-y-0.5 px-3 pb-3">
-                <SortableContext items={bench.map(e => e.id)} strategy={verticalListSortingStrategy}>
-                  {bench.map((entry, i) => (
-                    <PlayerCard
-                      key={entry.id}
-                      entry={entry}
-                      opponents={opponentsByTeam?.[entry.player.fpl_team]}
-                      benchNumber={entry.bench_order ?? i + 1}
-                      canEdit={effectiveCanEdit}
-                      onSetCaptain={handleSetCaptain}
-                      onSetVC={handleSetVC}
-                      onMarkDrop={handleMarkDrop}
-                      isSelected={entry.id === selectedId}
-                      isEligible={eligiblePartnerIds.has(entry.id)}
-                      dimmed={!!selectedId && entry.id !== selectedId && !eligiblePartnerIds.has(entry.id)}
-                      onSelect={() => handleSelect(entry.id)}
-                    />
-                  ))}
                 </SortableContext>
-                {Array.from({ length: emptyBenchSlots }).map((_, i) => (
-                  <EmptySlot
-                    key={`empty-bench-${i}`}
-                    id={`empty-bench-${bench.length + i + 1}`}
-                    label="Empty bench slot"
-                    index={bench.length + i + 1}
-                    isEligible={emptyBenchEligible}
-                    dimmed={!!selectedId && !emptyBenchEligible}
-                    onSelect={() => handleSelectEmpty("bench", bench.length + i + 1)}
-                  />
-                ))}
               </CardContent>
             </Card>
 
@@ -522,42 +549,50 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
           </DndContext>
         </div>
 
-        {/* Staged / dropped players */}
-        <DroppedSection
-          entries={dropped}
-          canEdit={canEdit}
-          onReturnFromDrop={handleReturnFromDrop}
-          quotaSummary={quotaSummary}
-          dropsLocked={dropsLocked || lineupLocked}
-        />
-
+        {/* Gameweek Performance pitch — sits beside the roster pitch on xl. */}
         {children}
+
+        {/* Staged / dropped players, full width beneath both pitches. */}
+        <div className="xl:col-span-2">
+          <DroppedSection
+            entries={dropped}
+            canEdit={canEdit}
+            onReturnFromDrop={handleReturnFromDrop}
+            quotaSummary={quotaSummary}
+            dropsLocked={dropsLocked || lineupLocked}
+          />
+        </div>
       </div>
     </div>
   )
 }
 
+/** Pitch-shaped placeholder, matching PitchSlot's footprint so an incomplete
+ *  squad doesn't make the rows jump around. */
 function EmptySlot({
   id, label, index, isEligible, dimmed, onSelect,
 }: { id: string; label: string; index?: number; isEligible?: boolean; dimmed?: boolean; onSelect?: () => void }) {
   const { setNodeRef, isOver } = useDroppable({ id })
   return (
-    <div
-      ref={setNodeRef}
-      onClick={isEligible ? onSelect : undefined}
-      className={`flex items-center gap-3 py-2.5 px-2 rounded-md border transition-colors ${
-        isOver || isEligible
-          ? "border-emerald-500/60 bg-emerald-500/10 opacity-70 cursor-pointer"
-          : dimmed ? "border-transparent opacity-15" : "border-transparent opacity-30"
-      }`}
-    >
+    <div className="relative flex">
       {index !== undefined && (
-        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted/10 text-[10px] font-bold text-muted-foreground border border-border/30">
+        <span className="absolute -left-1 -top-1 z-[2] flex h-4 w-4 items-center justify-center rounded-full border border-border/40 bg-card font-mono text-[9px] font-semibold text-muted-foreground">
           {index}
-        </div>
+        </span>
       )}
-      <div className="w-10 h-6 rounded border border-border/30 bg-muted/10" />
-      <p className="text-xs text-muted-foreground/70 italic">{label}</p>
+      <div
+        ref={setNodeRef}
+        onClick={isEligible ? onSelect : undefined}
+        title={label}
+        className={cn(
+          "flex h-[4.6rem] w-[5.3rem] items-center justify-center rounded-[0.55rem] border border-dashed transition-colors max-[400px]:w-[4.6rem]",
+          isOver || isEligible
+            ? "cursor-pointer border-emerald-500/60 bg-emerald-500/10"
+            : dimmed ? "border-border/20 opacity-30" : "border-border/30 opacity-60",
+        )}
+      >
+        <span className="px-1 text-center text-[9px] italic leading-tight text-muted-foreground/70">{label}</span>
+      </div>
     </div>
   )
 }

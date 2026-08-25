@@ -4,14 +4,13 @@ import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { MoreVertical } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { PositionBadge } from "@/components/ui/PositionBadge"
+import { PitchSlot } from "./Pitch"
 import { formatMoney, cn } from "@/lib/utils"
 import type { RosterEntry, Player } from "@/types"
 
@@ -56,125 +55,88 @@ export function PlayerCard({
     isDragging,
   } = useSortable({ id: entry.id, disabled: !canEdit })
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  }
-
   const oppLabel = opponentLabel(opponents)
+  const subtitle = oppLabel
+    ? `${entry.player.fpl_team_short} · ${oppLabel}`
+    : entry.player.fpl_team_short
 
   return (
     <div
       ref={setNodeRef}
-      style={style}
-      onClick={canEdit ? onSelect : undefined}
-      className={cn(
-        "flex items-center justify-between py-2.5 px-2 rounded-md border border-transparent transition-all duration-200 ease-out group",
-        "hover:bg-accent/50",
-        canEdit && "cursor-pointer",
-        isDragging && "opacity-40",
-        isSelected && "border-primary/60 bg-primary/10",
-        isEligible && "border-emerald-500/60 bg-emerald-500/10",
-        dimmed && "opacity-40",
-      )}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className="relative"
     >
-      <div className="flex items-center gap-3">
-        {/* Drag handle — only shown when canEdit */}
-        {canEdit && (
-          <div
-            {...attributes}
-            {...listeners}
-            onClick={(e) => e.stopPropagation()}
-            className="text-muted-foreground/40 hover:text-muted-foreground cursor-grab active:cursor-grabbing touch-none select-none"
-          >
-            ⠿
-          </div>
+      <PitchSlot
+        position={entry.player.position}
+        name={entry.player.web_name}
+        subtitle={subtitle}
+        value={formatMoney(entry.base_price)}
+        benchNumber={benchNumber}
+        onClick={canEdit ? onSelect : undefined}
+        // The whole card is the drag handle now — a pitch slot is too small
+        // to carry a separate grip target the way the old list row did.
+        handleProps={canEdit ? { ...attributes, ...listeners } : undefined}
+        className={cn(
+          isDragging && "opacity-40",
+          isSelected && "!border-primary ring-1 ring-primary/60",
+          isEligible && "!border-emerald-500 ring-1 ring-emerald-500/60",
+          dimmed && "opacity-40",
+          canEdit && "touch-none select-none",
         )}
-
-        {/* Bench slot number */}
-        {benchNumber !== undefined && (
-          <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-bold text-muted-foreground border border-border shrink-0">
-            {benchNumber}
-          </div>
-        )}
-
-        <PositionBadge position={entry.player.position} />
-
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <p className="text-sm font-medium leading-none">{entry.player.web_name}</p>
+        topRight={
+          <>
             {entry.is_captain && (
-              <Badge variant="secondary" className="text-[10px] h-4 px-1 py-0 uppercase bg-amber-500/20 text-amber-600 border-0">C</Badge>
+              <Badge variant="secondary" className="h-3.5 border-0 bg-amber-500/20 px-1 py-0 text-[9px] uppercase text-amber-600">C</Badge>
             )}
             {entry.is_vice_captain && (
-              <Badge variant="secondary" className="text-[10px] h-4 px-1 py-0 uppercase">VC</Badge>
+              <Badge variant="secondary" className="h-3.5 px-1 py-0 text-[9px] uppercase">VC</Badge>
             )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {entry.player.fpl_team_short}
-            {oppLabel && <> · vs {oppLabel}</>}
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      <div className="flex items-center gap-2">
-        {/* Edit actions — always visible (not hover-gated) so they're reachable on touch screens */}
-        {canEdit && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 w-6 p-0 text-muted-foreground"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <MoreVertical className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-              {entry.slot_type === "starting" && !entry.is_captain && (
-                <DropdownMenuItem onClick={() => onSetCaptain(entry.id)}>
-                  Make Captain
-                </DropdownMenuItem>
-              )}
-              {entry.slot_type === "starting" && !entry.is_vice_captain && (
-                <DropdownMenuItem onClick={() => onSetVC(entry.id)}>
-                  Make Vice-Captain
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem className="text-destructive" onClick={() => onMarkDrop(entry.id)}>
-                Drop
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-
-        <span className="text-sm font-mono font-medium text-muted-foreground group-hover:text-foreground transition-colors shrink-0">
-          {formatMoney(entry.base_price)}
-        </span>
-      </div>
+      {/* Actions sit outside PitchSlot so the dropdown trigger never inherits
+          the drag listeners — otherwise opening the menu starts a drag. */}
+      {canEdit && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Actions for ${entry.player.web_name}`}
+              onClick={e => e.stopPropagation()}
+              onPointerDown={e => e.stopPropagation()}
+              className="absolute -right-1 -top-1 z-[2] flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground"
+            >
+              <MoreVertical className="h-2.5 w-2.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
+            {entry.slot_type === "starting" && !entry.is_captain && (
+              <DropdownMenuItem onClick={() => onSetCaptain(entry.id)}>Make Captain</DropdownMenuItem>
+            )}
+            {entry.slot_type === "starting" && !entry.is_vice_captain && (
+              <DropdownMenuItem onClick={() => onSetVC(entry.id)}>Make Vice-Captain</DropdownMenuItem>
+            )}
+            <DropdownMenuItem className="text-destructive" onClick={() => onMarkDrop(entry.id)}>
+              Drop
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   )
 }
 
-// Lightweight non-draggable version for overlay rendering
+/** Non-draggable copy used inside DragOverlay. */
 export function PlayerCardOverlay({ entry, benchNumber }: Pick<Props, "entry" | "benchNumber">) {
   return (
-    <div className="flex items-center justify-between py-2.5 px-2 rounded-md shadow-2xl bg-background/80 backdrop-blur-md border border-primary/20 scale-[1.02] rotate-1 cursor-grabbing transition-transform">
-      <div className="flex items-center gap-3">
-        <div className="text-muted-foreground/40 cursor-grabbing">⠿</div>
-        {benchNumber !== undefined && (
-          <div className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-bold text-muted-foreground border border-border shrink-0">
-            {benchNumber}
-          </div>
-        )}
-        <PositionBadge position={entry.player.position} />
-        <div>
-          <p className="text-sm font-medium leading-none">{entry.player.web_name}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{entry.player.fpl_team_short}</p>
-        </div>
-      </div>
-      <span className="text-sm font-mono font-medium text-muted-foreground">{formatMoney(entry.base_price)}</span>
-    </div>
+    <PitchSlot
+      position={entry.player.position}
+      name={entry.player.web_name}
+      subtitle={entry.player.fpl_team_short}
+      value={formatMoney(entry.base_price)}
+      benchNumber={benchNumber}
+      className="rotate-1 scale-[1.04] border-primary/40 shadow-2xl"
+    />
   )
 }

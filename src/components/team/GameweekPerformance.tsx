@@ -1,9 +1,8 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { PositionBadge } from "@/components/ui/PositionBadge"
 import {
   Select,
   SelectContent,
@@ -12,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Pitch, PitchSlot, groupByPosition } from "./Pitch"
 import { cn } from "@/lib/utils"
 import type { TeamGameweekPerformance } from "@/lib/scoring"
 import { SQUAD_RULES } from "@/types"
@@ -57,9 +57,17 @@ interface Props {
   currentGw: number
   initialGw: number
   initialData: TeamGameweekPerformance | null
+  /**
+   * player_id → display index, defining the within-row order. Team Selection
+   * owns this ordering and this view mirrors it, so the same position row
+   * never renders in two different orders across the two pitches. Players
+   * absent from it (a past gameweek's squad member since transferred out)
+   * sort to the end of their row.
+   */
+  rosterOrder?: Record<number, number>
 }
 
-export function GameweekPerformance({ teamId, currentGw, initialGw, initialData }: Props) {
+export function GameweekPerformance({ teamId, currentGw, initialGw, initialData, rosterOrder }: Props) {
   const [selectedGw, setSelectedGw] = useState(initialGw)
   const [data, setData] = useState<TeamGameweekPerformance | null>(initialData)
   const [loading, setLoading] = useState(false)
@@ -83,6 +91,24 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
 
   const hasData = !!data && (data.starting.length > 0 || data.bench.length > 0)
   const autoSubs = [...(data?.starting ?? []), ...(data?.bench ?? [])].filter(p => p.was_subbed_in)
+
+  const orderMap = useMemo(
+    () => rosterOrder ? new Map(Object.entries(rosterOrder).map(([id, i]) => [Number(id), i])) : null,
+    [rosterOrder],
+  )
+
+  // A starter who played no minutes but still COUNTED — the bench was
+  // exhausted (or no sub kept the formation legal), so they stayed in the XI
+  // scoring zero. Without a marker they're indistinguishable from an
+  // ordinary blank, which hides the fact that the auto-sub couldn't help.
+  // Distinct from `!counted` starters, who were successfully subbed out.
+  const blankedIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const p of data?.starting ?? []) {
+      if (p.counted && !p.was_subbed_in && (p.stat_breakdown?.minutes ?? 0) === 0) ids.add(p.player_id)
+    }
+    return ids
+  }, [data])
 
   return (
     <Card className="border-border/60">
@@ -138,38 +164,44 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData 
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Starting XI</p>
-              <div className="space-y-1">
-                {data!.starting.map(p => (
-                  <PlayerPointsRow key={p.player_id} player={p} />
-                ))}
-              </div>
-            </div>
-
-            {data!.bench.length > 0 && (
-              <div className="space-y-1.5 pt-2 border-t border-border/40">
-                <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Bench</p>
-                <div className="space-y-1">
-                  {data!.bench.map(p => (
-                    <PlayerPointsRow key={p.player_id} player={p} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {autoSubs.length > 0 && (
-              <div className="space-y-1.5 pt-2 border-t border-border/40">
-                <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Auto-subs</p>
-                {autoSubs.map(p => (
-                  <p key={p.player_id} className="text-xs text-muted-foreground">
-                    <span className="text-foreground font-medium">{p.web_name}</span>
-                    {" came on for "}
-                    <span className="text-foreground font-medium">{p.subbed_out_web_name ?? "unknown player"}</span>
-                  </p>
-                ))}
-              </div>
-            )}
+            <Pitch
+              rows={orderMap
+                ? groupByPosition(data!.starting, p => p.position, orderMap, p => p.player_id)
+                    .map(row => row.map(p => (
+                      <PlayerPointsRow key={p.player_id} player={p} blanked={blankedIds.has(p.player_id)} />
+                    )))
+                : groupByPosition(data!.starting, p => p.position)
+                    .map(row => row.map(p => (
+                      <PlayerPointsRow key={p.player_id} player={p} blanked={blankedIds.has(p.player_id)} />
+                    )))}
+              bench={data!.bench.map(p => (
+                <PlayerPointsRow key={p.player_id} player={p} blanked={false} />
+              ))}
+              footer={
+                (autoSubs.length > 0 || blankedIds.size > 0) && (
+                  <div className="mt-2 rounded-[calc(var(--radius)-2px)] border border-border/60 px-3 py-2.5 space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground text-center mb-1.5">
+                      Auto-subs
+                    </p>
+                    {autoSubs.map(p => (
+                      <p key={p.player_id} className="text-xs text-muted-foreground">
+                        <span className="text-emerald-500 font-bold mr-1">↑</span>
+                        <span className="text-foreground font-medium">{p.web_name}</span>
+                        {" came on for "}
+                        <span className="text-foreground font-medium">{p.subbed_out_web_name ?? "unknown player"}</span>
+                      </p>
+                    ))}
+                    {data!.starting.filter(p => blankedIds.has(p.player_id)).map(p => (
+                      <p key={p.player_id} className="text-xs text-muted-foreground">
+                        <span className="text-amber-500 font-bold mr-1">!</span>
+                        <span className="text-foreground font-medium">{p.web_name}</span>
+                        {" blanked — no legal substitute remained, so they counted for 0"}
+                      </p>
+                    ))}
+                  </div>
+                )
+              }
+            />
           </TooltipProvider>
         )}
       </CardContent>
@@ -181,7 +213,14 @@ function formatSigned(n: number): string {
   return n > 0 ? `+${n}` : `${n}`
 }
 
-function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting"][number] }) {
+function PlayerPointsRow({
+  player,
+  blanked,
+}: {
+  player: TeamGameweekPerformance["starting"][number]
+  /** Counted starter who played 0 minutes — see blankedIds above. */
+  blanked: boolean
+}) {
   const breakdown = player.stat_breakdown
   // points_breakdown sums to stat_breakdown.total_points — the player's own
   // RAW points, before captain doubling. player.points is the doubled value
@@ -198,46 +237,44 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting
     ? STAT_LABELS.filter(({ key }) => breakdown[key] > 0)
     : []
 
-  const pointsEl = (
-    <span className={cn(
-      "text-sm font-mono font-semibold shrink-0 ml-2",
-      !player.counted && "font-normal",
-      breakdown && "underline decoration-dotted decoration-muted-foreground/50 underline-offset-2 cursor-help",
-    )}>
-      {player.points}
-    </span>
-  )
-
-  return (
-    <div className={cn(
-      "flex items-center justify-between py-2 px-2.5 rounded-md",
-      player.is_captain && "bg-amber-500/10 ring-1 ring-amber-500/30",
-      !player.counted && "opacity-50",
-    )}>
-      <div className="flex items-center gap-2.5 min-w-0">
-        <PositionBadge position={player.position} />
-        <div className="min-w-0 flex items-center gap-1.5">
-          <p className="text-sm font-medium truncate">{player.web_name}</p>
+  // Subbed out (a starter who didn't count) vs came on (a bench player who
+  // did) vs blanked-but-stuck-in — three visually distinct states, matching
+  // FPL's own Points view where players stay where the manager PICKED them
+  // and the swap is annotated rather than re-ordered.
+  const subbedOut = player.slot_type === "starting" && !player.counted
+  const slot = (
+    <PitchSlot
+      position={player.position}
+      name={player.web_name}
+      value={player.points}
+      title={breakdown ? undefined : "No stats recorded"}
+      className={cn(
+        player.is_captain && "bg-amber-500/10",
+        player.was_subbed_in && "!border-emerald-500 ring-1 ring-emerald-500/50",
+        blanked && "!border-amber-500 ring-1 ring-amber-500/50",
+        (subbedOut || (!player.counted && player.slot_type === "bench")) && "opacity-45",
+        breakdown && "cursor-help",
+      )}
+      topRight={
+        <>
           {player.is_captain && (
-            <Badge variant="secondary" className="text-[10px] h-4 px-1 py-0 uppercase bg-amber-500/20 text-amber-600 border-0">
+            <Badge variant="secondary" className="h-3.5 border-0 bg-amber-500/20 px-1 py-0 text-[9px] uppercase text-amber-600">
               C ×2
             </Badge>
           )}
-          {player.was_subbed_in && (
-            <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 text-emerald-500 border-emerald-500/30">
-              Sub
-            </Badge>
-          )}
-          {!player.counted && (
-            <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 text-muted-foreground border-border/50">
-              {player.slot_type === "starting" ? "Subbed out" : "Unused"}
-            </Badge>
-          )}
-        </div>
-      </div>
+          {player.was_subbed_in && <span className="text-[11px] font-bold leading-none text-emerald-500" title="Came on">↑</span>}
+          {subbedOut && <span className="text-[11px] font-bold leading-none text-rose-500" title="Subbed out">↓</span>}
+          {blanked && <span className="text-[11px] font-extrabold leading-none text-amber-500" title="Blanked — no substitute available">!</span>}
+        </>
+      }
+    />
+  )
+
+  return (
+    <>
       {breakdown ? (
         <Tooltip>
-          <TooltipTrigger asChild>{pointsEl}</TooltipTrigger>
+          <TooltipTrigger asChild><div>{slot}</div></TooltipTrigger>
           <TooltipContent side="left" className="text-xs">
             {pointsBreakdown ? (
               pointsBreakdown.length > 0 ? (
@@ -263,7 +300,7 @@ function PlayerPointsRow({ player }: { player: TeamGameweekPerformance["starting
               : breakdown.minutes > 0 ? `${breakdown.minutes} mins` : "Did not play"}
           </TooltipContent>
         </Tooltip>
-      ) : pointsEl}
-    </div>
+      ) : slot}
+    </>
   )
 }

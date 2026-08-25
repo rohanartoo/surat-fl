@@ -72,6 +72,17 @@ export default async function TeamPage({ params }: PageProps) {
   // not your team" apart from "locked — GW deadline passed". AM/admin bypass.
   const lineupLocked = lock.locked && !canOverrideLock
 
+  // The canonical within-row ordering for both pitches — Team Selection
+  // renders most-expensive-first, and GameweekPerformance mirrors it by
+  // player id so a position row never appears in two different orders on
+  // the same page. Derived here from the roster this page already fetched,
+  // rather than costing GameweekPerformance an extra query.
+  const rosterOrder: Record<number, number> = {}
+  roster
+    .filter(e => e.slot_type === "starting")
+    .sort((a, b) => b.base_price - a.base_price || a.player.web_name.localeCompare(b.player.web_name))
+    .forEach((e, i) => { rosterOrder[e.player_id] = i })
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -100,14 +111,13 @@ export default async function TeamPage({ params }: PageProps) {
         lineupLocked={lineupLocked}
         canOverrideLock={canOverrideLock}
       >
-        <div className="xl:sticky xl:top-20">
-          <GameweekPerformance
-            teamId={team.id}
-            currentGw={currentGw}
-            initialGw={initialGw}
-            initialData={initialGwPerformance}
-          />
-        </div>
+        <GameweekPerformance
+          teamId={team.id}
+          currentGw={currentGw}
+          initialGw={initialGw}
+          initialData={initialGwPerformance}
+          rosterOrder={rosterOrder}
+        />
       </SquadManager>
 
       {/* Admin controls — only visible to admin, only when the team has a linked profile */}
