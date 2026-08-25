@@ -126,22 +126,22 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData,
           </SelectContent>
         </Select>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 px-1 pb-1">
         {loading ? (
-          <p className="text-sm text-muted-foreground italic py-4 text-center">Loading…</p>
+          <p className="px-3 text-sm text-muted-foreground italic py-4 text-center">Loading…</p>
         ) : !hasData ? (
-          <p className="text-sm text-muted-foreground italic py-4 text-center">
+          <p className="px-3 text-sm text-muted-foreground italic py-4 text-center">
             No scoring data for GW {selectedGw} yet.
           </p>
         ) : (
           <TooltipProvider delayDuration={150}>
             {data!.starting.length < SQUAD_RULES.starting && (
-              <p className="text-xs text-amber-500 bg-amber-500/10 px-3 py-2 rounded-md">
+              <p className="mx-2 text-xs text-amber-500 bg-amber-500/10 px-3 py-2 rounded-md">
                 ⚠ Only {data!.starting.length}/{SQUAD_RULES.starting} Starting XI slots were filled this gameweek —
                 no auto-subs were possible for the missing slots, so the team total reflects fewer than a full XI.
               </p>
             )}
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between px-3">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Team total</p>
               <div className="flex items-baseline gap-2">
                 {data!.points_penalty !== null && (
@@ -279,7 +279,7 @@ function PlayerPointsRow({
     <>
       {breakdown ? (
         <Tooltip>
-          <TooltipTrigger asChild><div>{slot}</div></TooltipTrigger>
+          <TooltipTrigger asChild>{slot}</TooltipTrigger>
           <TooltipContent side="left" className="text-xs">
             {pointsBreakdown ? (
               pointsBreakdown.length > 0 ? (

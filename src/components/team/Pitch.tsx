@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { forwardRef, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import { POSITION_ORDER } from "@/lib/auction-engine"
 import type { Position } from "@/types"
@@ -149,12 +149,24 @@ export interface PitchSlotProps {
  * (selection, eligibility, sub state), so neither caller has to fork the
  * markup.
  */
-export function PitchSlot({
+export const PitchSlot = forwardRef<HTMLDivElement, PitchSlotProps & Omit<React.HTMLAttributes<HTMLDivElement>, "title">>(
+function PitchSlot({
   name, subtitle, value, position, marker, benchNumber, className, onClick, handleProps, title,
-  outerRef, outerStyle, outerClassName, actions,
-}: PitchSlotProps) {
+  outerRef, outerStyle, outerClassName, actions, ...rest
+}, ref) {
   return (
-    <div ref={outerRef} style={outerStyle} className={cn("relative flex", SLOT_WIDTH, outerClassName)}>
+    <div
+      // Both refs are real: dnd-kit passes its sortable ref via outerRef,
+      // while a forwarded ref arrives when a Radix `asChild` parent (the
+      // points tooltip) targets this element. Wrapping this in an extra div
+      // instead would reintroduce the bug this replaced — a shrink-wrapping
+      // parent leaves SLOT_WIDTH's percentage with no definite container and
+      // the card collapses to a sliver.
+      ref={node => { outerRef?.(node); if (typeof ref === "function") ref(node); else if (ref) ref.current = node }}
+      style={outerStyle}
+      {...rest}
+      className={cn("relative flex", SLOT_WIDTH, outerClassName)}
+    >
       {benchNumber !== undefined && (
         <span className="absolute -left-1 -top-1 z-[2] flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card font-mono text-[9px] font-semibold text-muted-foreground">
           {benchNumber}
@@ -192,7 +204,7 @@ export function PitchSlot({
       {actions}
     </div>
   )
-}
+})
 
 /** Same footprint as a PitchSlot, for callers rendering a placeholder. */
 export function PitchSlotShell({ children, className }: { children: ReactNode; className?: string }) {
