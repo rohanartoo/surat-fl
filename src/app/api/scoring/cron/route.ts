@@ -25,13 +25,26 @@ async function runCron() {
 
   // Player/fixture data (used by the Auction pool and My Team's "vs
   // opponent" display) previously only ever updated when an AM/admin
-  // manually clicked "Sync FPL data" — nothing scheduled it. Folded in here
-  // rather than as a second Vercel cron entry, keeping the cron-job count at
-  // one (Hobby-plan crons are capped at 2/day). Runs regardless of whether a
-  // gameweek is currently active — player/fixture data can go stale between
-  // seasons or pre-season just as easily as mid-season. Each sync gets its
-  // own try/catch so a failure in one never blocks the other, or the
-  // points/penalty sync below.
+  // manually clicked "Sync FPL data" — nothing scheduled it, so it's folded
+  // in here.
+  //
+  // It stays folded in even though vercel.json now schedules this endpoint
+  // six times a day. An earlier version of this comment claimed Hobby crons
+  // were "capped at 2/day", which is wrong: Hobby allows 100 cron jobs per
+  // project, each limited to firing once per day (so N entries at N
+  // different hours is how you get N runs/day), with per-hour precision —
+  // a "0 23" job realistically fires anywhere in the 23:00 hour. The actual
+  // reason the sync isn't its own cron entry is that Vercel Cron issues GET
+  // requests and /api/fpl/sync only implements POST.
+  //
+  // Running the player sync 6x rather than 1x a day is cheap at this scale
+  // (~700 upserts in 2 batches plus a guarded prune) and is a positive:
+  // injury news and availability refresh through the day, not just at night.
+  //
+  // Runs regardless of whether a gameweek is currently active — player and
+  // fixture data can go stale between seasons or pre-season just as easily
+  // as mid-season. Each sync gets its own try/catch so a failure in one
+  // never blocks the other, or the points/penalty sync below.
   let fplSyncResult: unknown
   try {
     fplSyncResult = await syncFplPlayers(supabase)

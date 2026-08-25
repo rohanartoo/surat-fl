@@ -65,5 +65,6 @@ Season auction order: **initial → post-summer (end-Aug window) → minis → p
 
 ### Scoring
 - Real FPL points for starting XI. Auto-sub rules: non-playing starters replaced by bench in priority order, formation minimums respected.
-- Scoring sync: daily cron at 23:00 UTC + manual trigger by admin/AM.
+- Scoring sync: cron every 4 hours (03/07/11/15/19/23 UTC) + manual trigger by admin/AM. Vercel Hobby caps each cron expression at once per day, so `vercel.json` lists six separate entries hitting the same endpoint; timing is per-hour precision (±59 min), not exact.
+- A gameweek only *finalizes* (auto-subs and captain→VC resolved, lineup lock lifted) once FPL's own `events[].finished` flag flips — which it does after bonus points are confirmed, typically the morning after the last fixture. Until then the cron rebuilds `gameweek_points` from the live rosters on every run, so manual edits to that table are not durable; edit `roster_entries` instead. See `src/lib/lineup-lock.ts`.
 - Season rollover: full wipe in Settings → Danger Zone resets rosters, budgets, scores, and base prices. Does not touch usernames, passwords, or team names.

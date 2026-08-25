@@ -196,10 +196,12 @@ many parallel contexts, or similar).
 - Monitoring/alerting on the scoring cron — Phase 1 of the 2026-08-08 fixes
   made the cron actually run; nothing currently *alerts* if it silently stops
   working again (e.g. FPL API shape changes, secret rotates and breaks auth).
-  A simple "cron ran successfully in the last 25 hours" check (Vercel cron
-  monitoring, or a dead-man's-switch style external ping) would have caught
-  today's "never actually ran" bug immediately instead of it going unnoticed
-  for however long it was live.
+  A simple "cron ran successfully recently" check (Vercel cron monitoring, or
+  a dead-man's-switch style external ping) would have caught today's "never
+  actually ran" bug immediately instead of it going unnoticed for however
+  long it was live. Note the window this should use has changed: the cron now
+  runs every 4 hours (2026-08-25), so ~5 hours is the right threshold, not
+  the 25 hours a once-daily schedule implied.
 - A short incident runbook: what to do if a gameweek's data looks wrong, if
   an auction gets stuck, if budgets look off — who has DB access, which
   scripts/queries were used to diagnose past incidents (several are documented

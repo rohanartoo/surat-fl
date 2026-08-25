@@ -2,6 +2,26 @@
   "crons": [
     {
       "path": "/api/scoring/cron",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/scoring/cron",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/scoring/cron",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/scoring/cron",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/scoring/cron",
+      "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/scoring/cron",
       "schedule": "0 23 * * *"
     }
   ]
