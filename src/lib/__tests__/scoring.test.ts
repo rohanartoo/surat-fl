@@ -5,7 +5,7 @@ import { fetchFplLive } from "@/lib/fpl"
 import type { FplLiveStats } from "@/lib/fpl"
 import type { Position } from "@/types"
 
-vi.mock("@/lib/fpl", () => ({ fetchFplLive: vi.fn() }))
+vi.mock("@/lib/fpl", () => ({ fetchFplLive: vi.fn(), fetchFplBootstrap: vi.fn() }))
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -611,5 +611,140 @@ describe("getTeamGameweekPerformance bench ordering", () => {
     const { getTeamGameweekPerformance } = await import("@/lib/scoring")
     const res = await getTeamGameweekPerformance("t1", 5, supabase)
     expect(res.bench.map(p => p.web_name)).toEqual(["First", "Second", "Unknown"])
+  })
+})
+
+// ─── runManualGameweekSync: finalize must not skip auto-subs ──────────────────
+
+/**
+ * `finalize: true` means "act as though FPL had flipped events[].finished".
+ *
+ * Regression guard for a real ordering bug: the finalize row used to be
+ * written BEFORE preserveRoster was computed, so isGameweekFinalized() then
+ * returned true and the sync took the refresh-only path. Auto-subs and the
+ * captain→VC fallback are gated on gwFinished, so force-finalizing a stuck
+ * gameweek froze a snapshot whose subs had never run — and, because a
+ * finalized gameweek can never be rebuilt, never could.
+ */
+function makeManualSyncSupabase(opts: { alreadyFinalized: boolean; existingRows?: unknown[]; roster?: unknown[] }) {
+  const calls = { finalizeUpserts: [] as unknown[], deleted: false, inserted: [] as unknown[] }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chain = (data: unknown): any => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c: any = Promise.resolve({ data, error: null })
+    c.eq = () => chain(data); c.not = () => chain(data); c.in = () => chain(data)
+    c.maybeSingle = () => chain(data); c.single = () => chain(data)
+    return c
+  }
+  const supabase = {
+    // applyDropPenalties goes through an RPC, and is only reached on the
+    // rebuild path — reaching it at all is part of what these tests assert.
+    rpc: () => chain(0),
+    from: (table: string) => {
+      if (table === "gameweek_scoring_status") {
+        return {
+          select: () => chain(opts.alreadyFinalized ? { gameweek: 3 } : null),
+          upsert: (payload: unknown) => { calls.finalizeUpserts.push(payload); return chain(null) },
+        }
+      }
+      if (table === "gameweek_points") {
+        return {
+          select: () => chain(opts.existingRows ?? []),
+          update: () => chain(null),
+          delete: () => { calls.deleted = true; return chain(null) },
+          insert: (rows: unknown[]) => { calls.inserted.push(...rows); return chain(null) },
+        }
+      }
+      if (table === "teams") return { select: () => chain([{ id: "t1" }]) }
+      if (table === "roster_entries") return { select: () => chain(opts.roster ?? []) }
+      if (table === "team_transfer_records") return { select: () => chain([]), update: () => chain(null) }
+      throw new Error(`unexpected table: ${table}`)
+    },
+  }
+  return { supabase, calls }
+}
+
+describe("runManualGameweekSync — finalize", () => {
+  it("passes gwFinished so the live gameweek is rebuilt WITH auto-subs, instead of freezing a refresh-only snapshot", async () => {
+    const { fetchFplBootstrap } = await import("@/lib/fpl")
+    // GW3 is the live gameweek and FPL still says it is NOT finished — the
+    // exact stuck-flag case the escape hatch exists for.
+    vi.mocked(fetchFplBootstrap).mockResolvedValue({
+      events: [{ id: 3, is_current: true, finished: false }],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    // FWD starter 10 blanked; bench DEF 13 played, so an auto-sub is available.
+    const live = allPlayed()
+    live[10] = stats(0)
+    vi.mocked(fetchFplLive).mockResolvedValue(live)
+
+    const { starting, bench } = makeSquad()
+    const roster = [...starting, ...bench].map(e => ({
+      id: e.id, team_id: "t1", player_id: e.player_id, slot_type: e.slot_type,
+      bench_order: e.bench_order, base_price: e.base_price,
+      is_captain: e.is_captain, is_vice_captain: e.is_vice_captain,
+      player: { position: e.position },
+    }))
+
+    const { supabase, calls } = makeManualSyncSupabase({ alreadyFinalized: false, roster })
+    const { runManualGameweekSync } = await import("@/lib/scoring")
+    const res = await runManualGameweekSync(3, supabase, { finalize: true })
+
+    // The rebuild path ran (it deletes before re-inserting); the refresh-only
+    // path would have returned early without ever touching delete.
+    expect(calls.deleted).toBe(true)
+    expect(res.preservedRoster).toBeUndefined()
+
+    // The assertion that actually guards the bug: auto-subs are gated on
+    // gwFinished, so if finalize failed to propagate as gwFinished, bench DEF
+    // 13 would never come on for the blanked FWD 10 — and because finalizing
+    // makes the rebuild path permanently unreachable, it never could.
+    const rows = calls.inserted as { player_id: number; was_subbed_in: boolean; subbed_out_player_id: number | null; counted: boolean }[]
+    const subbedIn = rows.filter(r => r.was_subbed_in)
+    expect(subbedIn.map(r => r.player_id)).toEqual([13])
+    expect(subbedIn[0].subbed_out_player_id).toBe(10)
+    expect(rows.find(r => r.player_id === 10)?.counted).toBe(false)
+
+    // syncGameweekPoints finalizes itself at the END of the rebuild, tagged
+    // "sync". A "manual" row here would mean runManualGameweekSync pre-wrote
+    // it — the ordering that caused the bug.
+    expect(res.finalized).toBe(true)
+    expect(calls.finalizeUpserts).toEqual([{ gameweek: 3, finalized_by: "sync" }])
+  })
+
+  it("still writes the status row for a past gameweek, which cannot be rebuilt but must lift a stuck lock", async () => {
+    const { fetchFplBootstrap } = await import("@/lib/fpl")
+    // GW5 is live; GW3 is in the past, so its roster must not be rebuilt from
+    // today's squads even when finalize is forced.
+    vi.mocked(fetchFplBootstrap).mockResolvedValue({
+      events: [{ id: 5, is_current: true, finished: false }],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    vi.mocked(fetchFplLive).mockResolvedValue({})
+
+    const { supabase, calls } = makeManualSyncSupabase({ alreadyFinalized: false, existingRows: [] })
+    const { runManualGameweekSync } = await import("@/lib/scoring")
+    const res = await runManualGameweekSync(3, supabase, { finalize: true })
+
+    expect(calls.deleted).toBe(false)
+    expect(res.preservedRoster).toBe(true)
+    expect(calls.finalizeUpserts).toEqual([{ gameweek: 3, finalized_by: "manual" }])
+    expect(res.finalized).toBe(true)
+  })
+
+  it("without finalize, a stuck live gameweek is neither rebuilt with subs nor finalized", async () => {
+    const { fetchFplBootstrap } = await import("@/lib/fpl")
+    vi.mocked(fetchFplBootstrap).mockResolvedValue({
+      events: [{ id: 3, is_current: true, finished: false }],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    vi.mocked(fetchFplLive).mockResolvedValue({})
+
+    const { supabase, calls } = makeManualSyncSupabase({ alreadyFinalized: false })
+    const { runManualGameweekSync } = await import("@/lib/scoring")
+    const res = await runManualGameweekSync(3, supabase)
+
+    expect(res.finalized).toBe(false)
+    expect(calls.finalizeUpserts).toEqual([])
   })
 })

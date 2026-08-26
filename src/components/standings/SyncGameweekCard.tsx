@@ -106,9 +106,9 @@ export function SyncGameweekCard() {
                 line, which silently ran "undone" into "from" here. Strings make
                 every space intentional. */}
             <p className="text-[11px] text-amber-500">
-              {"Force-finalizing permanently freezes this gameweek's snapshot and lifts the lineup lock. It "}
+              {"Scores this gameweek as though FPL had marked it finished — running auto-subs and the captain fallback — then freezes it and lifts the lineup lock. It "}
               <strong>cannot be undone</strong>
-              {" from the app — only a full league reset clears it. The scheduled sync finalizes on its own within about four hours of FPL confirming the gameweek, so only use this if FPL's “finished” flag is stuck on a gameweek that is genuinely over."}
+              {" from the app; only a full league reset clears it. The scheduled sync does all of this on its own within about four hours of FPL confirming the gameweek, so only use this if FPL's “finished” flag is stuck on a gameweek that is genuinely over. On a past gameweek it only lifts the lock — those can no longer be rebuilt, because squads have moved on since."}
             </p>
             {finalizeConfirm ? (
               <div className="flex gap-2">

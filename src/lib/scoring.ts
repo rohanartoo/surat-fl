@@ -389,31 +389,30 @@ export async function applyDropPenalties(
 }
 
 /**
- * The manual/admin "sync this gameweek now" flow — shared by the
- * /api/scoring/sync route (SYNC_SECRET bearer or admin session over HTTP)
- * and the Standings page's admin sync form, which calls this directly
- * rather than making a self-referential HTTP request back into the app (a
- * fetch to `${NEXT_PUBLIC_SITE_URL}/api/...` that breaks outright if that
- * env var is ever unset in production — exactly what happened before this
- * was extracted).
+ * The manual/admin "sync this gameweek now" flow, reached through the
+ * /api/scoring/sync route (SYNC_SECRET bearer or admin session over HTTP).
+ * The admin control on the Overview page posts to that route — see
+ * src/components/standings/SyncGameweekCard.tsx.
  *
  * `finalize: true` is the manual escape hatch for a gameweek that would
  * otherwise never finalize on its own (e.g. a fixture postponed out of its
  * gameweek entirely, so FPL never marks it finished) — see the wedge risk
- * noted in src/lib/lineup-lock.ts.
+ * noted in src/lib/lineup-lock.ts. It means "treat FPL as having reported
+ * this gameweek finished", so for the LIVE gameweek it runs the same
+ * rebuild a natural finalization would: auto-subs, the captain→VC fallback,
+ * and drop penalties, after which syncGameweekPoints writes the
+ * gameweek_scoring_status row itself.
+ *
+ * It deliberately does NOT force a rebuild of a past gameweek. Rosters move
+ * on, so there is no way to reconstruct that gameweek's auto-subs from
+ * today's squads; a past gameweek only gets the status row written, which
+ * lifts the lineup lock without rewriting history.
  */
 export async function runManualGameweekSync(
   gw: number,
   supabase: SupabaseClient,
   opts: { finalize?: boolean } = {},
 ): Promise<{ gameweek: number; penaltyRows: number } & Awaited<ReturnType<typeof syncGameweekPoints>>> {
-  if (opts.finalize === true) {
-    const { error: finalizeErr } = await supabase
-      .from("gameweek_scoring_status")
-      .upsert({ gameweek: gw, finalized_by: "manual" }, { onConflict: "gameweek", ignoreDuplicates: true })
-    if (finalizeErr) throw new Error(`runManualGameweekSync finalize: ${finalizeErr.message}`)
-  }
-
   // Only the live gameweek is rebuilt from current squads. For any earlier
   // gameweek, refresh points on the rows already recorded for it so that
   // transfers and mid-season auctions cannot rewrite past results. Fails
@@ -428,9 +427,15 @@ export async function runManualGameweekSync(
   const preserveRoster =
     currentEvent === null || gw !== currentEvent.id || await isGameweekFinalized(gw, supabase)
 
+  // finalize means "act as though FPL had flipped events[].finished". Passing
+  // it through as gwFinished (rather than writing the status row up front) is
+  // the whole point: auto-subs and the captain→VC fallback are gated on this
+  // flag, and writing the row first would flip preserveRoster above to true,
+  // sending the sync down the refresh-only path — permanently freezing a
+  // gameweek whose auto-subs had never run and now never could.
   const pointsResult = await syncGameweekPoints(gw, supabase, {
     preserveRoster,
-    gwFinished: currentEvent?.finished,
+    gwFinished: opts.finalize === true ? true : currentEvent?.finished,
   })
   // A pending drop penalty must only ever attach to the live/next gameweek
   // actually being scored for the first time — not to a preserveRoster
@@ -439,6 +444,22 @@ export async function runManualGameweekSync(
   const penaltyResult = preserveRoster
     ? { penaltyRows: 0 }
     : await applyDropPenalties(gw, supabase)
+
+  // syncGameweekPoints writes the status row itself on the rebuild path (it
+  // reports that back as `finalized`). The preserveRoster path returns before
+  // reaching that, so a force-finalize of a past or already-recorded gameweek
+  // still needs it written here — that case cannot be rebuilt, but it must
+  // still be able to lift a stuck lineup lock.
+  //
+  // Written AFTER the sync on purpose: finalizing first and then failing the
+  // rebuild would leave the gameweek frozen with whatever partial rows it had.
+  if (opts.finalize === true && !pointsResult.finalized) {
+    const { error: finalizeErr } = await supabase
+      .from("gameweek_scoring_status")
+      .upsert({ gameweek: gw, finalized_by: "manual" }, { onConflict: "gameweek", ignoreDuplicates: true })
+    if (finalizeErr) throw new Error(`runManualGameweekSync finalize: ${finalizeErr.message}`)
+    pointsResult.finalized = true
+  }
 
   return { gameweek: gw, ...pointsResult, ...penaltyResult }
 }
