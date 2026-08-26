@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Gavel, Users, User, Trophy, Settings, LogOut, ArrowLeftRight, Menu } from "lucide-react"
+import { LayoutDashboard, Gavel, Users, User, Settings, LogOut, ArrowLeftRight, Menu } from "lucide-react"
 import type { Role } from "@/types"
 
 const navItems: { href: string; label: string; icon: typeof LayoutDashboard; roles?: Role[] }[] = [
@@ -21,7 +21,8 @@ const navItems: { href: string; label: string; icon: typeof LayoutDashboard; rol
   { href: "/auction", label: "Auction", icon: Gavel },
   { href: "/my-team", label: "My Team", icon: User, roles: ["team"] },
   { href: "/teams", label: "Teams", icon: Users },
-  { href: "/standings", label: "Standings", icon: Trophy },
+  // Standings merged into /dashboard ("Overview") — the two rendered the same
+  // table, and the admin sync form moved with it.
   { href: "/loan-transfers", label: "Loan Transfers", icon: ArrowLeftRight, roles: ["admin", "auction_master"] },
   { href: "/settings",  label: "Settings",  icon: Settings },
 ]

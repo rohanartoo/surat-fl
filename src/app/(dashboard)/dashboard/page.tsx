@@ -4,7 +4,8 @@ import { getProfile } from "@/lib/roles"
 import { getStandings, getLastSyncedGameweek, getGameweekHighlights } from "@/lib/scoring"
 import { fetchCurrentGameweek } from "@/lib/fpl"
 import { StandingsTable } from "@/components/standings/StandingsTable"
-import { Card, CardContent } from "@/components/ui/card"
+import { SyncGameweekCard } from "@/components/standings/SyncGameweekCard"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -24,15 +25,25 @@ export default async function DashboardPage() {
 
   const seasonStart = new Date().getMonth() + 1 >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1
   const season = `${seasonStart}/${String(seasonStart + 1).slice(-2)}`
+  const scored = gameweeks.length > 0
+    ? `${gameweeks.length} gameweek${gameweeks.length > 1 ? "s" : ""} scored`
+    : "no gameweeks scored yet"
   const subtitle = currentGw
-    ? `Gameweek ${currentGw} · ${season} season`
-    : `${season} season`
+    ? `Gameweek ${currentGw} · ${season} season · ${scored}`
+    : `${season} season · ${scored}`
+
+  const isAdmin = profile?.role === "admin"
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">League Overview</h1>
-        <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>
+      {/* Stacks on a phone — the sync card is a fixed 20rem and would
+          otherwise push the layout viewport wider than the visual one. */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">League Overview</h1>
+          <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>
+        </div>
+        {isAdmin && <SyncGameweekCard />}
       </div>
 
       {highlights && (highlights.playerOfTheWeek || highlights.topTeam) && (
@@ -96,16 +107,18 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <div>
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
-          Standings
-        </p>
-        <StandingsTable
-          standings={standings}
-          gameweeks={gameweeks}
-          myTeamId={profile?.team_id ?? undefined}
-        />
-      </div>
+      <Card className="border-border/60">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">League Table</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <StandingsTable
+            standings={standings}
+            gameweeks={gameweeks}
+            myTeamId={profile?.team_id ?? undefined}
+          />
+        </CardContent>
+      </Card>
     </div>
   )
 }
