@@ -54,10 +54,13 @@ export function PlayerCard({
     isDragging,
   } = useSortable({ id: entry.id, disabled: !canEdit })
 
-  const oppLabel = opponentLabel(opponents)
-  const subtitle = oppLabel
-    ? `${entry.player.fpl_team_short} · ${oppLabel}`
-    : entry.player.fpl_team_short
+  // Opponent only — the player's own club is already implied by the player,
+  // and prefixing it pushed the fixture out of a slot sized to fit five
+  // across (~58px at 390px), so a phone showed "SUN ·" and truncated away
+  // the only part that matters when picking a lineup. Falls back to the club
+  // when there is no fixture (blank gameweek, or fixtures not yet synced) so
+  // the card keeps its third line and stays the same height as its row.
+  const subtitle = opponentLabel(opponents) ?? entry.player.fpl_team_short
 
   return (
     <PitchSlot
@@ -135,12 +138,14 @@ export function PlayerCard({
 }
 
 /** Non-draggable copy used inside DragOverlay. */
-export function PlayerCardOverlay({ entry, benchNumber }: Pick<Props, "entry" | "benchNumber">) {
+export function PlayerCardOverlay({ entry, opponents, benchNumber }: Pick<Props, "entry" | "opponents" | "benchNumber">) {
   return (
     <PitchSlot
       position={entry.player.position}
       name={entry.player.web_name}
-      subtitle={entry.player.fpl_team_short}
+      // Same subtitle as the card being dragged — otherwise picking a player
+      // up visibly swapped "FUL (H)" for their club.
+      subtitle={opponentLabel(opponents) ?? entry.player.fpl_team_short}
       value={formatMoney(entry.base_price)}
       benchNumber={benchNumber}
       className="rotate-1 scale-[1.04] border-primary/40 shadow-2xl"

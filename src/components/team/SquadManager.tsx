@@ -565,6 +565,7 @@ export function SquadManager({ initialRoster, teamBudget, canEdit, quotaSummary:
               {activeEntry && (
                 <PlayerCardOverlay
                   entry={activeEntry}
+                  opponents={opponentsByTeam?.[activeEntry.player.fpl_team]}
                   benchNumber={activeEntry.slot_type === "bench" ? (activeEntry.bench_order ?? undefined) : undefined}
                 />
               )}
