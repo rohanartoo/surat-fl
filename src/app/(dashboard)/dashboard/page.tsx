@@ -51,30 +51,9 @@ export default async function DashboardPage() {
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
             Gameweek {highlights.gameweek} highlights
           </p>
+          {/* Top Team first: the grid collapses to one column on a phone, so
+              source order is what decides which card is read first there. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {highlights.playerOfTheWeek && (
-              <Card className="border-border/60 border-l-2 border-l-emerald-500/60">
-                <CardContent className="pt-5 pb-4 space-y-1">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Player of the Week</p>
-                  <div className="flex items-end justify-between">
-                    <div>
-                      <p className="text-lg font-semibold leading-tight">
-                        {highlights.playerOfTheWeek.web_name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {highlights.playerOfTheWeek.team_name}
-                        {highlights.playerOfTheWeek.was_subbed_in && " · subbed in"}
-                      </p>
-                    </div>
-                    <p className="text-3xl font-bold font-mono text-emerald-500">
-                      {highlights.playerOfTheWeek.points}
-                      <span className="text-sm font-normal text-muted-foreground ml-1">pts</span>
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
             {highlights.topTeam && (
               <Card className="border-border/60 border-l-2 border-l-amber-500/60">
                 <CardContent className="pt-5 pb-4 space-y-1">
@@ -97,6 +76,29 @@ export default async function DashboardPage() {
                     </div>
                     <p className="text-3xl font-bold font-mono text-amber-500">
                       {highlights.topTeam.points}
+                      <span className="text-sm font-normal text-muted-foreground ml-1">pts</span>
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {highlights.playerOfTheWeek && (
+              <Card className="border-border/60 border-l-2 border-l-emerald-500/60">
+                <CardContent className="pt-5 pb-4 space-y-1">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Player of the Week</p>
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-lg font-semibold leading-tight">
+                        {highlights.playerOfTheWeek.web_name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {highlights.playerOfTheWeek.team_name}
+                        {highlights.playerOfTheWeek.was_subbed_in && " · subbed in"}
+                      </p>
+                    </div>
+                    <p className="text-3xl font-bold font-mono text-emerald-500">
+                      {highlights.playerOfTheWeek.points}
                       <span className="text-sm font-normal text-muted-foreground ml-1">pts</span>
                     </p>
                   </div>

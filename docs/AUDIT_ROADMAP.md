@@ -39,8 +39,6 @@ implementation.
   truncate it by end of a full season (~4,000 rows).
 - `simulate-gw` has no guard against overwriting a real synced gameweek with
   random data — the `check/` route is advisory/client-side only.
-- Chat un-kick doesn't propagate live — `chat_kicks` needs `replica identity full`
-  for Realtime DELETE payloads to carry `guest_name`.
 - `AuctionProvider`'s `auction-lots`/`auction-bids` channels trigger a full
   `refresh()` (multi-query refetch) on every single row change, for all
   connected clients — no debounce. Also `roster_entries` UPDATE isn't
@@ -178,10 +176,7 @@ Not covered at all by the 2026-08-08 audit, which was entirely backend/API-focus
   the sequential-request races already reasoned about statically.
 - Malformed/hostile request bodies against every route — wrong types, huge
   payloads, SQL-injection-shaped strings (should be moot given parameterized
-  Supabase calls, but worth confirming), unicode edge cases in chat/names.
-- Rate-limit abuse of the intentionally-open `/api/chat/send` guest endpoint —
-  decide whether basic rate limiting is warranted even for a private league
-  (e.g. Vercel's built-in options, or a simple per-IP counter).
+  Supabase calls, but worth confirming), unicode edge cases in names.
 
 **Effort**: medium — needs a scripted load-test harness (k6, Playwright with
 many parallel contexts, or similar).

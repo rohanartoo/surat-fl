@@ -130,33 +130,6 @@ CREATE TABLE IF NOT EXISTS "public"."bids" (
 ALTER TABLE "public"."bids" OWNER TO "postgres";
 
 -- =============================================
--- CHAT KICKS (moderation)
--- =============================================
-CREATE TABLE IF NOT EXISTS "public"."chat_kicks" (
-    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "guest_name" "text" NOT NULL,
-    "kicked_at" timestamp with time zone DEFAULT "now"() NOT NULL
-);
-
-ALTER TABLE "public"."chat_kicks" OWNER TO "postgres";
-
--- =============================================
--- CHAT MESSAGES
--- =============================================
-CREATE TABLE IF NOT EXISTS "public"."chat_messages" (
-    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "auction_id" "uuid",
-    "user_id" "uuid",
-    "author_name" "text" NOT NULL,
-    "is_guest" boolean DEFAULT false NOT NULL,
-    "message" "text" NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "chat_messages_message_check" CHECK ((("char_length"("message") >= 1) AND ("char_length"("message") <= 500)))
-);
-
-ALTER TABLE "public"."chat_messages" OWNER TO "postgres";
-
--- =============================================
 -- GAMEWEEK POINTS (scoring)
 -- =============================================
 CREATE TABLE IF NOT EXISTS "public"."gameweek_points" (
@@ -299,15 +272,6 @@ ALTER TABLE ONLY "public"."auctions"
 ALTER TABLE ONLY "public"."bids"
     ADD CONSTRAINT "bids_pkey" PRIMARY KEY ("id");
 
-ALTER TABLE ONLY "public"."chat_kicks"
-    ADD CONSTRAINT "chat_kicks_guest_name_key" UNIQUE ("guest_name");
-
-ALTER TABLE ONLY "public"."chat_kicks"
-    ADD CONSTRAINT "chat_kicks_pkey" PRIMARY KEY ("id");
-
-ALTER TABLE ONLY "public"."chat_messages"
-    ADD CONSTRAINT "chat_messages_pkey" PRIMARY KEY ("id");
-
 ALTER TABLE ONLY "public"."gameweek_points"
     ADD CONSTRAINT "gameweek_points_pkey" PRIMARY KEY ("id");
 
@@ -347,10 +311,6 @@ ALTER TABLE ONLY "public"."team_drops"
 ALTER TABLE ONLY "public"."team_transfer_records"
     ADD CONSTRAINT "unique_team_auction" UNIQUE ("team_id", "auction_id");
 
-CREATE INDEX "chat_messages_auction_id_created_at_idx" ON "public"."chat_messages" USING "btree" ("auction_id", "created_at");
-
-CREATE INDEX "chat_messages_created_at_idx" ON "public"."chat_messages" USING "btree" ("created_at") WHERE ("auction_id" IS NULL);
-
 CREATE UNIQUE INDEX "unique_player_team_gw" ON "public"."gameweek_points" USING "btree" ("team_id", "gameweek", "player_id") WHERE ("player_id" IS NOT NULL);
 
 ALTER TABLE ONLY "public"."auction_log"
@@ -379,12 +339,6 @@ ALTER TABLE ONLY "public"."bids"
 
 ALTER TABLE ONLY "public"."bids"
     ADD CONSTRAINT "bids_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id");
-
-ALTER TABLE ONLY "public"."chat_messages"
-    ADD CONSTRAINT "chat_messages_auction_id_fkey" FOREIGN KEY ("auction_id") REFERENCES "public"."auctions"("id") ON DELETE CASCADE;
-
-ALTER TABLE ONLY "public"."chat_messages"
-    ADD CONSTRAINT "chat_messages_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 ALTER TABLE ONLY "public"."gameweek_points"
     ADD CONSTRAINT "gameweek_points_player_id_fkey" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id");
@@ -461,13 +415,9 @@ CREATE POLICY "Anyone can read auctions" ON "public"."auctions" FOR SELECT USING
 
 CREATE POLICY "Anyone can read bids" ON "public"."bids" FOR SELECT USING (true);
 
-CREATE POLICY "Anyone can read chat" ON "public"."chat_messages" FOR SELECT USING (true);
-
 CREATE POLICY "Anyone can read drops" ON "public"."team_drops" FOR SELECT USING (true);
 
 CREATE POLICY "Anyone can read gw points" ON "public"."gameweek_points" FOR SELECT USING (true);
-
-CREATE POLICY "Anyone can read kicks" ON "public"."chat_kicks" FOR SELECT USING (true);
 
 CREATE POLICY "Anyone can read log" ON "public"."auction_log" FOR SELECT USING (true);
 
@@ -482,8 +432,6 @@ CREATE POLICY "Anyone can read roster" ON "public"."roster_entries" FOR SELECT U
 CREATE POLICY "Anyone can read teams" ON "public"."teams" FOR SELECT USING (true);
 
 CREATE POLICY "Anyone can read transfers" ON "public"."team_transfer_records" FOR SELECT USING (true);
-
-CREATE POLICY "Authenticated users can delete own messages" ON "public"."chat_messages" FOR DELETE USING (("auth"."uid"() = "user_id"));
 
 CREATE POLICY "Service role syncs players" ON "public"."players" TO "service_role" USING (true);
 
@@ -512,10 +460,6 @@ ALTER TABLE "public"."auctions" ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE "public"."bids" ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE "public"."chat_kicks" ENABLE ROW LEVEL SECURITY;
-
-ALTER TABLE "public"."chat_messages" ENABLE ROW LEVEL SECURITY;
-
 ALTER TABLE "public"."gameweek_points" ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE "public"."players" ENABLE ROW LEVEL SECURITY;
@@ -541,10 +485,6 @@ ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."auction_log";
 ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."auction_lots";
 
 ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."bids";
-
-ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_kicks";
-
-ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_messages";
 
 ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."roster_entries";
 
@@ -578,14 +518,6 @@ GRANT ALL ON TABLE "public"."auctions" TO "service_role";
 GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."bids" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."bids" TO "authenticated";
 GRANT ALL ON TABLE "public"."bids" TO "service_role";
-
-GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_kicks" TO "anon";
-GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_kicks" TO "authenticated";
-GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_kicks" TO "service_role";
-
-GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_messages" TO "anon";
-GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_messages" TO "authenticated";
-GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."chat_messages" TO "service_role";
 
 GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."gameweek_points" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."gameweek_points" TO "authenticated";

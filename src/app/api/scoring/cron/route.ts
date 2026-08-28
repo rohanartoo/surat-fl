@@ -104,12 +104,6 @@ async function runCron() {
     finalized ? Promise.resolve({ penaltyRows: 0 }) : applyDropPenalties(gw, supabase),
   ])
 
-  // Purge chat messages older than 30 days
-  await supabase
-    .from("chat_messages")
-    .delete()
-    .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-
   return NextResponse.json({ ok: true, gameweek: gw, fplSyncResult, fixturesSyncResult, catchUpResults, ...pointsResult, ...penaltyResult })
 }
 
