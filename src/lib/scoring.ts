@@ -608,17 +608,24 @@ export async function getGameweekHighlights(
   // starters and unused bench players — an unused bench haul shouldn't be
   // crowned). Displayed as the player's own points, not the captain-doubled
   // stored value, since "Player of the Week" is about individual output.
+  //
+  // Rank on that same un-doubled value. gameweek_points.points stores the
+  // captain's haul already doubled, so ranking on the raw column crowned a
+  // captain who scored less than the actual top scorer — and then displayed
+  // the halved figure, showing a lower number than the player it beat.
   let playerOfTheWeek: GameweekHighlights["playerOfTheWeek"] = null
   const countedRows = (pointRows ?? []).filter((r: { counted: boolean }) => r.counted)
   if (countedRows.length > 0) {
-    const best = [...countedRows].sort((a, b) => b.points - a.points)[0]
+    const individual = (r: { points: number; is_captain: boolean }) =>
+      r.is_captain ? r.points / 2 : r.points
+    const best = [...countedRows].sort((a, b) => individual(b) - individual(a))[0]
     if (best?.player) {
       const p = best.player as { web_name: string; first_name: string; second_name: string; fpl_team_short: string }
       playerOfTheWeek = {
         player_name: `${p.first_name} ${p.second_name}`,
         web_name: p.web_name,
         team_name: p.fpl_team_short,
-        points: best.is_captain ? best.points / 2 : best.points,
+        points: individual(best),
         was_subbed_in: best.was_subbed_in,
       }
     }

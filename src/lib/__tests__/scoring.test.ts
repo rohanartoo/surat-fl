@@ -460,6 +460,27 @@ describe("getGameweekHighlights", () => {
     expect(result.playerOfTheWeek?.points).toBe(9)
   })
 
+  it("ranks on un-doubled points, so a lower-scoring captain does not beat the top scorer", async () => {
+    const rows = [
+      // Stored doubled (26) but individually a 13 — must not outrank a plain 14.
+      makePointRow({ player_id: 1, points: 26, is_captain: true, counted: true, player: { web_name: "Haaland", first_name: "Erling", second_name: "Haaland", fpl_team_short: "MCI" } }),
+      makePointRow({ player_id: 2, points: 14, counted: true, player: { web_name: "Cherki", first_name: "Rayan", second_name: "Cherki", fpl_team_short: "MCI" } }),
+    ]
+    const result = await getGameweekHighlights(2, makeHighlightsSupabase([T1], rows))
+    expect(result.playerOfTheWeek?.web_name).toBe("Cherki")
+    expect(result.playerOfTheWeek?.points).toBe(14)
+  })
+
+  it("still crowns a captain who is the top scorer on individual output", async () => {
+    const rows = [
+      makePointRow({ player_id: 1, points: 30, is_captain: true, counted: true, player: { web_name: "Skipper", first_name: "S", second_name: "Kipper", fpl_team_short: "MCI" } }),
+      makePointRow({ player_id: 2, points: 14, counted: true }),
+    ]
+    const result = await getGameweekHighlights(2, makeHighlightsSupabase([T1], rows))
+    expect(result.playerOfTheWeek?.web_name).toBe("Skipper")
+    expect(result.playerOfTheWeek?.points).toBe(15)
+  })
+
   it("includes a team's applied drop penalty when determining Top Team", async () => {
     const rows = [
       makePointRow({ team_id: "t1", player_id: 1, points: 60, counted: true }),
