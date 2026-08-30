@@ -9,13 +9,85 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Pitch, PitchSlot, groupByPosition } from "./Pitch"
 import { cn } from "@/lib/utils"
 import type { TeamGameweekPerformance } from "@/lib/scoring"
 import { SQUAD_RULES } from "@/types"
 
 const SEASON_LENGTH = 38
+
+// Matches the tooltip's old delayDuration, so a mouse crossing fifteen cards
+// still doesn't strobe through fifteen popovers.
+const HOVER_DELAY_MS = 150
+
+/** Which popover is open — a player_id, or the team-total penalty note. */
+type OpenKey = number | "penalty"
+
+/**
+ * These breakdowns used to be Radix tooltips, which by design never open on
+ * touch: the trigger's onPointerMove returns early for `pointerType: "touch"`
+ * and onPointerDown suppresses the focus-open path, so on a phone the
+ * breakdown was unreachable by any gesture. Popover is click-driven, so touch
+ * works natively; hover is layered back on here for fine pointers, guarded by
+ * the same pointerType check Radix's own tooltip uses. Testing the pointer at
+ * event time (rather than a media query) is deliberate — there is no server/
+ * client disagreement to hydrate around.
+ */
+function useBreakdownPopovers() {
+  const [openId, setOpenId] = useState<OpenKey | null>(null)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function cancelHover() {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = null
+  }
+
+  // Only ever clears itself: a close racing a different card's open (tap A,
+  // then tap B — B's pointerdown dismisses A) must not wipe out the newer id.
+  function close(id: OpenKey) {
+    setOpenId(cur => (cur === id ? null : cur))
+  }
+
+  return {
+    isOpen: (id: OpenKey) => openId === id,
+    onOpenChange: (id: OpenKey) => (open: boolean) => {
+      cancelHover()
+      if (open) setOpenId(id)
+      else close(id)
+    },
+    /** Spread onto the trigger. Mouse opens on hover; touch falls through to
+     *  Popover's own click handling, so it isn't double-triggered. */
+    triggerProps: (id: OpenKey) => ({
+      onPointerEnter: (e: React.PointerEvent) => {
+        if (e.pointerType === "touch") return
+        cancelHover()
+        hoverTimer.current = setTimeout(() => setOpenId(id), HOVER_DELAY_MS)
+      },
+      onPointerLeave: (e: React.PointerEvent) => {
+        if (e.pointerType === "touch") return
+        cancelHover()
+        close(id)
+      },
+      // PitchSlot is a div, so Radix's aria-expanded lands on something with
+      // no native keyboard activation — supply it.
+      onKeyDown: (e: React.KeyboardEvent) => {
+        if (e.key !== "Enter" && e.key !== " ") return
+        e.preventDefault()
+        setOpenId(cur => (cur === id ? null : id))
+      },
+    }),
+  }
+}
+
+/** Shared by both popovers: never steal focus, and stay clear of the edges. */
+const POPOVER_CONTENT_PROPS = {
+  side: "top",
+  align: "center",
+  collisionPadding: 8,
+  onOpenAutoFocus: (e: Event) => e.preventDefault(),
+  onCloseAutoFocus: (e: Event) => e.preventDefault(),
+} as const
 
 // Fallback-only now (see PlayerPointsRow) — used when a player has a
 // stat_breakdown but no points_breakdown (old data synced before that field
@@ -72,6 +144,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData,
   const [loading, setLoading] = useState(false)
   // Ignore a slow response if the user has since picked a different GW.
   const latestRequestGw = useRef(initialGw)
+  const popovers = useBreakdownPopovers()
 
   async function handleGwChange(gw: number) {
     setSelectedGw(gw)
@@ -134,7 +207,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData,
             No scoring data for GW {selectedGw} yet.
           </p>
         ) : (
-          <TooltipProvider delayDuration={150}>
+          <>
             {data!.starting.length < SQUAD_RULES.starting && (
               <p className="mx-2 text-xs text-amber-500 bg-amber-500/10 px-3 py-2 rounded-md">
                 ⚠ Only {data!.starting.length}/{SQUAD_RULES.starting} Starting XI slots were filled this gameweek —
@@ -145,16 +218,21 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData,
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Team total</p>
               <div className="flex items-baseline gap-2">
                 {data!.points_penalty !== null && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="text-xs font-mono text-amber-500 cursor-help">
+                  <Popover open={popovers.isOpen("penalty")} onOpenChange={popovers.onOpenChange("penalty")}>
+                    <PopoverTrigger asChild>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        {...popovers.triggerProps("penalty")}
+                        className="text-xs font-mono text-amber-500 cursor-help"
+                      >
                         ({data!.points_penalty} penalty)
                       </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="left" className="text-xs">
+                    </PopoverTrigger>
+                    <PopoverContent {...POPOVER_CONTENT_PROPS} className="text-xs w-auto">
                       Drop-quota penalty applied this gameweek
-                    </TooltipContent>
-                  </Tooltip>
+                    </PopoverContent>
+                  </Popover>
                 )}
                 <p className={cn("text-2xl font-semibold font-mono", data!.points_penalty !== null && "text-amber-500")}>
                   {data!.team_total}
@@ -167,14 +245,14 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData,
               rows={orderMap
                 ? groupByPosition(data!.starting, p => p.position, orderMap, p => p.player_id)
                     .map(row => row.map(p => (
-                      <PlayerPointsRow key={p.player_id} player={p} blanked={blankedIds.has(p.player_id)} />
+                      <PlayerPointsRow key={p.player_id} player={p} blanked={blankedIds.has(p.player_id)} popovers={popovers} />
                     )))
                 : groupByPosition(data!.starting, p => p.position)
                     .map(row => row.map(p => (
-                      <PlayerPointsRow key={p.player_id} player={p} blanked={blankedIds.has(p.player_id)} />
+                      <PlayerPointsRow key={p.player_id} player={p} blanked={blankedIds.has(p.player_id)} popovers={popovers} />
                     )))}
               bench={data!.bench.map(p => (
-                <PlayerPointsRow key={p.player_id} player={p} blanked={false} showBenchNumber />
+                <PlayerPointsRow key={p.player_id} player={p} blanked={false} showBenchNumber popovers={popovers} />
               ))}
               footer={
                 (autoSubs.length > 0 || blankedIds.size > 0) && (
@@ -201,7 +279,7 @@ export function GameweekPerformance({ teamId, currentGw, initialGw, initialData,
                 )
               }
             />
-          </TooltipProvider>
+          </>
         )}
       </CardContent>
     </Card>
@@ -216,6 +294,7 @@ function PlayerPointsRow({
   player,
   blanked,
   showBenchNumber,
+  popovers,
 }: {
   player: TeamGameweekPerformance["starting"][number]
   /** Counted starter who played 0 minutes — see blankedIds above. */
@@ -224,6 +303,8 @@ function PlayerPointsRow({
    *  (a gameweek scored before it was recorded) rather than showing a
    *  placeholder the data can't back up. */
   showBenchNumber?: boolean
+  /** Open-state is owned by the parent so only one breakdown shows at a time. */
+  popovers: ReturnType<typeof useBreakdownPopovers>
 }) {
   const breakdown = player.stat_breakdown
   // points_breakdown sums to stat_breakdown.total_points — the player's own
@@ -253,6 +334,12 @@ function PlayerPointsRow({
       value={player.points}
       benchNumber={showBenchNumber ? player.bench_order ?? undefined : undefined}
       title={breakdown ? undefined : "No stats recorded"}
+      // Only the cards that actually have a breakdown become interactive —
+      // a card with nothing to show shouldn't take a tab stop. These land on
+      // PitchSlot's outer element, the same one Radix's asChild targets.
+      {...(breakdown
+        ? { role: "button", tabIndex: 0, ...popovers.triggerProps(player.player_id) }
+        : {})}
       className={cn(
         player.is_captain && "bg-amber-500/10",
         player.was_subbed_in && "!border-emerald-500 ring-1 ring-emerald-500/50",
@@ -278,9 +365,12 @@ function PlayerPointsRow({
   return (
     <>
       {breakdown ? (
-        <Tooltip>
-          <TooltipTrigger asChild>{slot}</TooltipTrigger>
-          <TooltipContent side="left" className="text-xs">
+        <Popover
+          open={popovers.isOpen(player.player_id)}
+          onOpenChange={popovers.onOpenChange(player.player_id)}
+        >
+          <PopoverTrigger asChild>{slot}</PopoverTrigger>
+          <PopoverContent {...POPOVER_CONTENT_PROPS} className="text-xs w-auto">
             {pointsBreakdown ? (
               pointsBreakdown.length > 0 ? (
                 <div className="space-y-0.5 min-w-[9rem]">
@@ -303,8 +393,8 @@ function PlayerPointsRow({
             ) : activeStats.length > 0
               ? activeStats.map(({ key, label }) => `${label}${breakdown[key] > 1 ? ` ×${breakdown[key]}` : ""}`).join(" · ")
               : breakdown.minutes > 0 ? `${breakdown.minutes} mins` : "Did not play"}
-          </TooltipContent>
-        </Tooltip>
+          </PopoverContent>
+        </Popover>
       ) : slot}
     </>
   )
