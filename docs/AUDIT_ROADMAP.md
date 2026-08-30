@@ -147,8 +147,30 @@ Not covered at all by the 2026-08-08 audit, which was entirely backend/API-focus
   effect cleanup, optimistic-update revert correctness — in components not
   touched by prior sessions' bug fixes (e.g. `Teams`, `Settings`, `Overview`
   pages haven't had focused review).
+- **No browser-level tests exist at all**, so any behaviour that only differs
+  by input device or viewport is invisible to CI. This is not hypothetical:
+  the Gameweek Performance points breakdown was a Radix tooltip, which by
+  design never opens on touch, so on a phone it was unreachable by any
+  gesture — tsc, lint, vitest and the build were all green the entire time.
+  Fixed 2026-08-29 by moving to Popover (`9167898`), but nothing stops a
+  future edit swapping it back and silently losing mobile again. Other
+  device-dependent surfaces in the same blind spot: the drag-and-drop squad
+  manager (`MouseSensor`/`TouchSensor`, deliberately not `PointerSensor`),
+  and the pitch's five-across slot sizing at 320-430px.
+  Two ways out, cheapest first:
+  1. A guard test asserting the breakdown trigger carries
+     `aria-haspopup="dialog"` — catches the swap-back specifically, costs
+     nothing, but proves nothing about real touch behaviour.
+  2. A small Playwright suite run against `npm run build` output, driven with
+     `browser.newContext({ hasTouch: true, isMobile: true })` and `.tap()`.
+     Note a default `.click()` dispatches `pointerType: "mouse"` and would
+     have passed against the broken build — any such test must be checked
+     against a known-bad build before it is trusted.
 
 **Effort**: medium — best done as its own Explore-agent pass per major page/component tree.
+The browser-test item is separable and closer to small: one harness plus a
+handful of assertions, though it needs Playwright added to the project (prior
+sessions have only ever installed it as a throwaway outside the repo).
 
 ---
 
