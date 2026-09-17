@@ -5,7 +5,6 @@ import type {
   FplFixture,
   FplExplainFixture,
   FplElementSummary,
-  FplTeam,
   PlayerSummary,
 } from "@/types"
 import { positionLabel } from "@/lib/utils"
@@ -71,24 +70,30 @@ export async function fetchFplFixtures(): Promise<FplFixture[]> {
 const SUMMARY_RECENT_COUNT = 5
 const SUMMARY_UPCOMING_COUNT = 3
 
+type FixtureTeams = { team_h_short: string; team_a_short: string }
+
 /**
- * Trims FPL's element-summary to what the auction stats dialog shows: the
+ * Trims FPL's element-summary to what the player stats panel shows: the
  * last few played fixtures (newest first) and the next few scheduled ones,
- * with opponent team ids resolved to short names. Fixtures without a
- * gameweek yet (`event: null`, i.e. postponed and unscheduled) are skipped.
+ * with opponents named from our synced fixtures table (keyed by FPL fixture
+ * id). Fixtures without a gameweek yet (`event: null`, i.e. postponed and
+ * unscheduled) are skipped; a fixture we haven't synced shows "?".
  */
 export function mapFplPlayerSummary(
   summary: FplElementSummary,
-  teams: FplTeam[]
+  fixturesById: Map<number, FixtureTeams>
 ): PlayerSummary {
-  const shortName = new Map(teams.map(t => [t.id, t.short_name]))
+  const opponent = (fixtureId: number, isHome: boolean) => {
+    const f = fixturesById.get(fixtureId)
+    return (isHome ? f?.team_a_short : f?.team_h_short) || "?"
+  }
 
   const recent = summary.history
     .slice(-SUMMARY_RECENT_COUNT)
     .reverse()
     .map(h => ({
       round: h.round,
-      opponent_short: shortName.get(h.opponent_team) ?? "?",
+      opponent_short: opponent(h.fixture, h.was_home),
       was_home: h.was_home,
       minutes: h.minutes,
       total_points: h.total_points,
@@ -103,7 +108,7 @@ export function mapFplPlayerSummary(
     .slice(0, SUMMARY_UPCOMING_COUNT)
     .map(f => ({
       event: f.event,
-      opponent_short: shortName.get(f.is_home ? f.team_a : f.team_h) ?? "?",
+      opponent_short: opponent(f.id, f.is_home),
       is_home: f.is_home,
       difficulty: f.difficulty,
     }))
@@ -111,19 +116,27 @@ export function mapFplPlayerSummary(
   return { recent, upcoming }
 }
 
-export async function fetchFplPlayerSummary(playerId: number): Promise<PlayerSummary> {
-  const [res, bootstrap] = await Promise.all([
+/**
+ * Opponent names come from our fixtures table, not bootstrap-static: that
+ * response is ~2.3MB, over Next's 2MB fetch-cache limit, so resolving names
+ * from it re-downloaded the whole file on every stats click.
+ */
+export async function fetchFplPlayerSummary(playerId: number, supabase: SupabaseClient): Promise<PlayerSummary> {
+  const [res, { data: fixtures }] = await Promise.all([
     fetch(`${FPL_BASE}/element-summary/${playerId}/`, {
       headers: { "User-Agent": "Mozilla/5.0" },
-      // Shorter than bootstrap's hour: recent form changes during a gameweek,
-      // but seven teams browsing the pool shouldn't each hit FPL per click.
+      // Recent form changes during a gameweek, but seven teams browsing the
+      // pool shouldn't each hit FPL per click.
       next: { revalidate: 900 },
     }),
-    fetchFplBootstrap(),
+    supabase.from("fixtures").select("id, team_h_short, team_a_short"),
   ])
   if (!res.ok) throw new Error(`FPL element-summary API error: ${res.status}`)
   const summary: FplElementSummary = await res.json()
-  return mapFplPlayerSummary(summary, bootstrap.teams)
+  const fixturesById = new Map(
+    ((fixtures ?? []) as ({ id: number } & FixtureTeams)[]).map(f => [f.id, f])
+  )
+  return mapFplPlayerSummary(summary, fixturesById)
 }
 
 /**

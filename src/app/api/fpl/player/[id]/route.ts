@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getProfile } from "@/lib/roles"
 import { fetchFplPlayerSummary } from "@/lib/fpl"
+import { createClient } from "@/lib/supabase/server"
 
 type Params = { params: Promise<{ id: string }> }
 
 // ─────────────────────────────────────────────
 // GET — read-only recent form + upcoming fixtures for one player, shown in
-// the auction page's stats dialog. Any signed-in role (including guest) may
+// the player stats panel (auction list and Players page). Any signed-in role (including guest) may
 // read; src/proxy.ts doesn't guard /api routes, so the session check is here.
 // ─────────────────────────────────────────────
 export async function GET(_request: NextRequest, { params }: Params) {
@@ -22,7 +23,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   }
 
   try {
-    return NextResponse.json(await fetchFplPlayerSummary(playerId))
+    return NextResponse.json(await fetchFplPlayerSummary(playerId, await createClient()))
   } catch (e) {
     console.error(`[fpl/player/${playerId}]`, e)
     return NextResponse.json({ error: "Could not load recent form from FPL." }, { status: 502 })

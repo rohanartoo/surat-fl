@@ -108,11 +108,12 @@ export interface FplExplainFixture {
  * FPL's per-player element-summary/{id}/ response — only the fields read by
  * mapFplPlayerSummary (src/lib/fpl.ts). `history` is this season's played
  * fixtures, oldest first; `fixtures` is the remaining ones, soonest first.
+ * Both carry FPL fixture ids, which match our own fixtures table.
  */
 export interface FplElementSummary {
   history: {
+    fixture: number
     round: number
-    opponent_team: number
     was_home: boolean
     minutes: number
     total_points: number
@@ -122,15 +123,14 @@ export interface FplElementSummary {
     bonus: number
   }[]
   fixtures: {
+    id: number
     event: number | null
-    team_h: number
-    team_a: number
     is_home: boolean
     difficulty: number
   }[]
 }
 
-/** Trimmed player summary served by GET /api/fpl/player/[id] for the auction stats dialog. */
+/** Trimmed player summary served by GET /api/fpl/player/[id] for the player stats panel. */
 export interface PlayerSummary {
   /** Last few played fixtures, newest first. Points are raw FPL — never captain-doubled. */
   recent: {

@@ -1,16 +1,20 @@
 import { describe, it, expect } from "vitest"
 import { mapFplPlayerSummary } from "@/lib/fpl"
-import type { FplElementSummary, FplTeam } from "@/types"
+import type { FplElementSummary } from "@/types"
 
-const teams: FplTeam[] = [
-  { id: 1, name: "Arsenal", short_name: "ARS", code: 3 },
-  { id: 2, name: "Chelsea", short_name: "CHE", code: 8 },
-  { id: 3, name: "Liverpool", short_name: "LIV", code: 14 },
-]
+// Our synced fixtures table, keyed by FPL fixture id.
+const fixturesById = new Map([
+  [10, { team_h_short: "ARS", team_a_short: "CHE" }],
+  [11, { team_h_short: "LIV", team_a_short: "ARS" }],
+  [20, { team_h_short: "ARS", team_a_short: "LIV" }],
+  [21, { team_h_short: "CHE", team_a_short: "ARS" }],
+  [22, { team_h_short: "ARS", team_a_short: "MCI" }],
+  [23, { team_h_short: "NEW", team_a_short: "ARS" }],
+])
 
 function historyRow(round: number, overrides: Partial<FplElementSummary["history"][number]> = {}) {
   return {
-    round, opponent_team: 2, was_home: true, minutes: 90, total_points: round,
+    fixture: 10, round, was_home: true, minutes: 90, total_points: round,
     goals_scored: 0, assists: 0, clean_sheets: 0, bonus: 0,
     ...overrides,
   }
@@ -22,36 +26,40 @@ describe("mapFplPlayerSummary", () => {
       history: [1, 2, 3, 4, 5, 6, 7].map(r => historyRow(r)),
       fixtures: [],
     }
-    const { recent } = mapFplPlayerSummary(summary, teams)
+    const { recent } = mapFplPlayerSummary(summary, fixturesById)
     expect(recent.map(r => r.round)).toEqual([7, 6, 5, 4, 3])
   })
 
-  it("resolves opponent ids to short names, and falls back to ? for an unknown id", () => {
+  it("names the other side of each played fixture, and shows ? for one we haven't synced", () => {
     const summary: FplElementSummary = {
-      history: [historyRow(1, { opponent_team: 3, was_home: false }), historyRow(2, { opponent_team: 99 })],
+      history: [
+        historyRow(1, { fixture: 10, was_home: true }),   // home vs CHE
+        historyRow(2, { fixture: 11, was_home: false }),  // away at LIV
+        historyRow(3, { fixture: 999 }),                  // not in our table
+      ],
       fixtures: [],
     }
-    const { recent } = mapFplPlayerSummary(summary, teams)
-    expect(recent[1]).toMatchObject({ round: 1, opponent_short: "LIV", was_home: false })
-    expect(recent[0].opponent_short).toBe("?")
+    const { recent } = mapFplPlayerSummary(summary, fixturesById)
+    expect(recent.map(r => r.opponent_short)).toEqual(["?", "LIV", "CHE"])
+    expect(recent[1].was_home).toBe(false)
   })
 
   it("names the other side of each upcoming fixture, skips unscheduled ones, and keeps three", () => {
     const summary: FplElementSummary = {
       history: [],
       fixtures: [
-        { event: null, team_h: 1, team_a: 2, is_home: true, difficulty: 3 },
-        { event: 8, team_h: 1, team_a: 2, is_home: true, difficulty: 2 },
-        { event: 9, team_h: 3, team_a: 1, is_home: false, difficulty: 5 },
-        { event: 10, team_h: 1, team_a: 3, is_home: true, difficulty: 4 },
-        { event: 11, team_h: 2, team_a: 1, is_home: false, difficulty: 3 },
+        { id: 30, event: null, is_home: true, difficulty: 3 },
+        { id: 20, event: 8, is_home: true, difficulty: 2 },
+        { id: 21, event: 9, is_home: false, difficulty: 5 },
+        { id: 22, event: 10, is_home: true, difficulty: 4 },
+        { id: 23, event: 11, is_home: false, difficulty: 3 },
       ],
     }
-    const { upcoming } = mapFplPlayerSummary(summary, teams)
+    const { upcoming } = mapFplPlayerSummary(summary, fixturesById)
     expect(upcoming).toEqual([
-      { event: 8, opponent_short: "CHE", is_home: true, difficulty: 2 },
-      { event: 9, opponent_short: "LIV", is_home: false, difficulty: 5 },
-      { event: 10, opponent_short: "LIV", is_home: true, difficulty: 4 },
+      { event: 8, opponent_short: "LIV", is_home: true, difficulty: 2 },
+      { event: 9, opponent_short: "CHE", is_home: false, difficulty: 5 },
+      { event: 10, opponent_short: "MCI", is_home: true, difficulty: 4 },
     ])
   })
 })
