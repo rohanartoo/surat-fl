@@ -115,6 +115,16 @@ tests) is still genuinely multi-session work.
 The 2026-08-08 audit spot-checked policies that looked suspicious; a full audit
 reads every policy against every role methodically.
 
+**Partly done (2026-09-17):** every team-scoped write policy (`bids`,
+`roster_entries`, `team_drops`, `teams`) was dropped and browser EXECUTE on all
+`rpc_*` functions revoked, in `20260917120000_close_team_direct_writes.sql`,
+after confirming no app code writes with a user session. A team could
+previously raise its own budget or inject roster rows from devtools; this was
+reproduced locally before the fix and blocked after. Guarded by
+`src/lib/__tests__/migration-security.test.ts`. Still open: auction master and
+admin write policies remain (kept by decision, unused by the app), and the
+full per-role matrix below hasn't been produced.
+
 - For each table in `supabase/migrations/*.sql`, tabulate: which roles
   (`admin`/`auction_master`/`team`/`guest`/`anon`) can `select`/`insert`/
   `update`/`delete`, per the RLS policy — cross-referenced against the

@@ -52,6 +52,19 @@ wipe cost nothing; now it costs the league its season:
 ## Database migrations
 - Every new table must explicitly grant privileges to all three roles: `grant select, insert, update, delete on public.<table> to authenticated, anon, service_role;`
 - RLS policies alone are not sufficient — Postgres-level grants are required separately and must always include `service_role` even though it bypasses RLS.
+- **Never add a write policy a team account can satisfy.** Those grants mean
+  RLS is the only thing between a signed-in team and the table, and every
+  team action already goes through a service-role API route that enforces the
+  league rules. Until
+  `supabase/migrations/20260917120000_close_team_direct_writes.sql`, "own
+  row" policies let a team raise its own `teams.budget`, add any player to
+  its roster past the deadline, or bid on a player it may not re-draft — from
+  browser devtools. Auction master/admin write policies still exist but are
+  unused by the app.
+- **Every new `rpc_*` function must `revoke execute … from public, anon,
+  authenticated`** (then grant to `service_role`). Supabase's default
+  privileges grant EXECUTE to all three, and the server is the only caller.
+  `src/lib/__tests__/migration-security.test.ts` fails CI on either mistake.
 
 ## Scheduled endpoints
 - **`GET /api/scoring/cron` is the route Vercel actually calls** — six times a
