@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useAuction } from "./AuctionProvider"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { cn, formatMoney, positionColor, statusColor, statusLabel } from "@/lib/utils"
 import { PositionBadge } from "@/components/ui/PositionBadge"
-import { PlayerStatsDialog } from "./PlayerStatsDialog"
+import { PlayerStatsPanel } from "./PlayerStatsPanel"
 import { roleIsAM } from "@/lib/role-utils"
 import type { Player, Position } from "@/types"
 
@@ -35,6 +35,20 @@ export function PlayerSelectionPanel() {
   const [opening, setOpening] = useState<number | null>(null)
   const [sortBy, setSortBy] = useState<SortKey>("tsb")
   const [viewing, setViewing] = useState<Player | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const viewingId = viewing?.id ?? null
+
+  // Stats expand under the clicked row inside the scrolling list, so align
+  // that row to the top of the list to keep the expanded stats in view.
+  // Scrolls only the list container, never the page.
+  useEffect(() => {
+    const list = listRef.current
+    if (viewingId === null || !list) return
+    const row = list.querySelector<HTMLElement>(`[data-player-id="${viewingId}"]`)
+    if (!row) return
+    const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top
+    list.scrollTo({ top: list.scrollTop + offset, behavior: "smooth" })
+  }, [viewingId])
 
   const isAM = roleIsAM(myRole)
   const currentPosition = auction?.current_position_category as Position | null
@@ -116,30 +130,34 @@ export function PlayerSelectionPanel() {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="max-h-[480px] overflow-y-auto divide-y divide-border/30">
+        <div ref={listRef} className="max-h-[480px] overflow-y-auto divide-y divide-border/30">
           {filtered.length === 0 ? (
             <p className="text-sm text-muted-foreground italic px-4 py-6 text-center">
               No available players.
             </p>
           ) : (
             filtered.map(player => (
-              <PlayerRow
-                key={player.id}
-                player={player}
-                isAM={isAM}
-                canOpen={isAM && !hasOpenLot && auction?.status === "active"}
-                isOpening={opening === player.id}
-                onOpen={() => openLot(player.id)}
-                onView={() => setViewing(player)}
-              />
+              <Fragment key={player.id}>
+                <PlayerRow
+                  player={player}
+                  isAM={isAM}
+                  canOpen={isAM && !hasOpenLot && auction?.status === "active"}
+                  isOpening={opening === player.id}
+                  onOpen={() => openLot(player.id)}
+                  isSelected={viewingId === player.id}
+                  sortBy={sortBy}
+                  onView={() => setViewing(viewingId === player.id ? null : player)}
+                />
+                {viewingId === player.id && (
+                  <div className="bg-accent/20 px-3 py-2.5">
+                    <PlayerStatsPanel player={player} />
+                  </div>
+                )}
+              </Fragment>
             ))
           )}
         </div>
       </CardContent>
-      <PlayerStatsDialog
-        player={viewing}
-        onOpenChange={open => { if (!open) setViewing(null) }}
-      />
     </Card>
   )
 }
@@ -150,6 +168,8 @@ function PlayerRow({
   canOpen,
   isOpening,
   onOpen,
+  isSelected,
+  sortBy,
   onView,
 }: {
   player: Player
@@ -157,15 +177,21 @@ function PlayerRow({
   canOpen: boolean
   isOpening: boolean
   onOpen: () => void
+  isSelected: boolean
+  sortBy: SortKey
   onView: () => void
 }) {
   return (
-    <div className="flex items-center justify-between px-4 py-2.5 hover:bg-accent/40 transition-colors group">
+    <div data-player-id={player.id} className={cn(
+      "flex items-center justify-between px-4 py-2.5 hover:bg-accent/40 transition-colors group",
+      isSelected && "bg-accent/60 hover:bg-accent/60",
+    )}>
       <button
         type="button"
         className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer focus-visible:outline-none focus-visible:underline"
         onClick={onView}
-        title="View stats"
+        aria-expanded={isSelected}
+        title={isSelected ? "Hide stats" : "View stats"}
       >
         <PositionBadge position={player.position} />
         <div className="min-w-0">
@@ -181,9 +207,17 @@ function PlayerRow({
         </div>
       </button>
       <div className="flex items-center gap-3 shrink-0 ml-2">
-        <span className="text-[10px] font-mono text-muted-foreground/60" title="Selected by (FPL)">
-          {player.selected_by_percent}%
-        </span>
+        {/* The figure the list is sorted by — FPL season points when sorting
+            by Points, otherwise selected-by % (price is always shown). */}
+        {sortBy === "points" ? (
+          <span className="text-xs font-mono font-semibold" title="Total FPL points this season">
+            {player.total_points} pts
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono text-muted-foreground/60" title="Selected by (FPL)">
+            {player.selected_by_percent}%
+          </span>
+        )}
         <span className="text-xs font-mono text-muted-foreground">
           {formatMoney(player.base_price)}
         </span>
