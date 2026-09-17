@@ -5,6 +5,7 @@ import { useAuction } from "./AuctionProvider"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { roleIsAM } from "@/lib/role-utils"
 
 type StagedTeam = {
   team_id: string
@@ -15,21 +16,22 @@ type StagedTeam = {
 }
 
 /**
- * Read-only, all-roles view of every team's staged drops for the current
- * auction — so teams can see who's dropped what (and infer remaining
- * budget/roster shape) before an auction locks those drops in. Visible from
- * the moment the auction master creates the auction (pending) through when
- * it's live (active), since drops can be staged in either state.
+ * Read-only view of every team's staged drops for the current auction —
+ * AM/admin only. Teams and guests must not see other teams' drops before the
+ * auction starts and locks them in (it would hand some teams a competitive
+ * edge), so the panel doesn't render or fetch for them, and the
+ * staged-detail endpoint rejects them too. See canSeeStagedDrops in
+ * src/lib/drops.ts.
  */
 export function StagedDropsPanel() {
-  const { auction } = useAuction()
+  const { auction, myRole } = useAuction()
   const [stagedDropTeams, setStagedDropTeams] = useState<StagedTeam[]>([])
 
   // Eligibility is derived at render time from the current auction, not
   // stored in state — the effect below only ever sets fetched data, never
   // resets it, so stale data from a previous auction simply never renders
   // once eligible flips false (avoids setState-in-effect on the "skip" path).
-  const eligible = !!auction && auction.type !== "initial" && ["pending", "active"].includes(auction.status)
+  const eligible = roleIsAM(myRole) && !!auction && auction.type !== "initial" && ["pending", "active"].includes(auction.status)
 
   useEffect(() => {
     if (!eligible || !auction) return

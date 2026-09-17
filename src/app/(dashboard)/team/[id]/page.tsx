@@ -4,11 +4,11 @@ import { notFound } from "next/navigation"
 import { SquadManager } from "@/components/team/SquadManager"
 import { AdminTeamControls } from "@/components/settings/AdminTeamControls"
 import { GameweekPerformance } from "@/components/team/GameweekPerformance"
-import { getDropQuota, getCarryoverForTeam } from "@/lib/drops"
+import { getDropQuota, getCarryoverForTeam, canSeeStagedDrops, maskStagedDrops } from "@/lib/drops"
 import { getTeamGameweekPerformance, getLastSyncedGameweek } from "@/lib/scoring"
 import { fetchCurrentGameweek, getUpcomingOpponents } from "@/lib/fpl"
 import { getLineupLockState } from "@/lib/lineup-lock"
-import type { LeagueTeam, Player, RosterEntry, DropQuotaSummary, AuctionType } from "@/types"
+import type { LeagueTeam, Player, RosterEntry, DropQuotaSummary, AuctionType, Role } from "@/types"
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -40,8 +40,13 @@ export default async function TeamPage({ params }: PageProps) {
   const [data, profile] = await Promise.all([getTeamData(id), getProfile()])
   if (!data) notFound()
 
-  const { team, roster, auction, teamProfile } = data
+  const { team, roster: rawRoster, auction, teamProfile } = data
   const isAdmin = profile?.role === "admin"
+  // Other teams and guests must not see this team's staged drops before the
+  // auction starts — masked server-side so they never reach the browser.
+  const roster = canSeeStagedDrops((profile?.role ?? "guest") as Role, profile?.team_id, team.id)
+    ? rawRoster
+    : maskStagedDrops(rawRoster)
   const canEdit = isAdmin || profile?.team_id === team.id
 
   // Compute drop quota for the owning team if there's an active/pending auction

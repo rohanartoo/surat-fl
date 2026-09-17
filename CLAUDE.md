@@ -96,6 +96,16 @@ Season auction order: **initial → post-summer (end-Aug window) → minis → p
   2. A player dropped **before** the post-January window can be re-drafted **by the same team from the post-January auction onward** — the gate keys off a `post_jan` auction being active/completed (`checkReDraftEligibility`).
   3. **Same-window**: independently, a team can never re-sign a player it dropped in the **same auction** (auction_id match in `handleDeclareInterest` / the initial auto-enroll).
 - A **different** team is never restricted from re-drafting a player someone else dropped.
+- **Staged drops are secret from other teams — but only in the app.** Drops are
+  staged while an auction is pending and locked in when the AM starts it
+  (`rpc_lock_and_credit_drops` credits budgets and deletes the `dropped`
+  roster rows). Until then only the owning team and AM/admin may see them:
+  the staged-drops panel and its API are AM-only, the auction pool excludes
+  staged players, and team pages show other teams a masked squad. RLS still
+  lets any signed-in user read `roster_entries` / `team_drops` directly, so
+  this is not real secrecy. **Any new view of rosters or drops shown to other
+  teams must go through `canSeeStagedDrops` / `maskStagedDrops`**
+  (`src/lib/drops.ts`), or it will leak who is about to hit the pool.
 - `team_drops.dropped_post_summer` is retained for history but **no longer affects eligibility** — a post-summer drop is a pre-January drop.
 
 ### Scoring

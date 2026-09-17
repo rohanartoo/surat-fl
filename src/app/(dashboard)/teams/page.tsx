@@ -1,9 +1,11 @@
 import { createClient } from "@/lib/supabase/server"
+import { getProfile } from "@/lib/roles"
+import { canSeeStagedDrops, maskStagedDrops } from "@/lib/drops"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { formatMoney, positionColor, cn } from "@/lib/utils"
-import type { LeagueTeam, RosterEntry, Player, Position } from "@/types"
+import type { LeagueTeam, RosterEntry, Player, Position, Role } from "@/types"
 import { SQUAD_RULES } from "@/types"
 import { POSITION_ORDER, validateFormation } from "@/lib/auction-engine"
 
@@ -16,24 +18,35 @@ async function getAllTeams() {
     .select("*")
     .order("display_name")
 
-  // Fetch all active roster entries (starting or bench)
+  // Fetch every roster entry, staged drops included — TeamsPage decides per
+  // team whether the viewer may see those drops or gets a masked squad.
   const { data: roster } = await supabase
     .from("roster_entries")
     .select("*, player:players(*)")
-    .in("slot_type", ["starting", "bench"])
 
   return { teams: (teams ?? []) as LeagueTeam[], roster: (roster ?? []) as (RosterEntry & { player: Player })[] }
 }
 
 export default async function TeamsPage() {
-  const { teams, roster } = await getAllTeams()
+  const [{ teams, roster }, profile] = await Promise.all([getAllTeams(), getProfile()])
+  const role = (profile?.role ?? "guest") as Role
 
   // Group roster by team_id
-  const rosterByTeam = roster.reduce<Record<string, (RosterEntry & { player: Player })[]>>((acc, entry) => {
+  const rawRosterByTeam = roster.reduce<Record<string, (RosterEntry & { player: Player })[]>>((acc, entry) => {
     if (!acc[entry.team_id]) acc[entry.team_id] = []
     acc[entry.team_id].push(entry)
     return acc
   }, {})
+
+  // Staged drops: the owning team and AM/admin see the true squad (drops
+  // excluded, as before); everyone else sees it as if nothing were staged,
+  // so squad counts don't give other teams' drops away.
+  const rosterByTeam: Record<string, (RosterEntry & { player: Player })[]> = {}
+  for (const [teamId, entries] of Object.entries(rawRosterByTeam)) {
+    rosterByTeam[teamId] = canSeeStagedDrops(role, profile?.team_id, teamId)
+      ? entries.filter((e) => e.slot_type !== "dropped")
+      : maskStagedDrops(entries)
+  }
 
   return (
     <div className="space-y-8">

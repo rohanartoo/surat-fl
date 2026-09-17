@@ -79,9 +79,12 @@ async function getPageData() {
     }
   }
 
-  // Player pool — always shown, filtered by current position if auction active
+  // Player pool — always shown, filtered by current position if auction active.
+  // Excludes every roster row, staged drops included: a staged player only
+  // re-enters the pool when the auction starts and locks the drop (the row is
+  // deleted then). Showing them earlier would reveal other teams' drops.
   const { data: draftedRows } = await supabase
-    .from("roster_entries").select("player_id").in("slot_type", ["starting", "bench"])
+    .from("roster_entries").select("player_id")
 
   const draftedIds = (draftedRows ?? []).map(r => r.player_id) as number[]
   const currentPos = (auction?.current_position_category ?? null) as Position | null

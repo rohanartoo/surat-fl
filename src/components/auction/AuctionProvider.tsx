@@ -112,7 +112,8 @@ export function AuctionProvider({
       ] = await Promise.all([
         supabase.from("auctions").select("*").in("status", ["pending", "active"]).maybeSingle(),
         supabase.from("teams").select("*").order("auction_order"),
-        supabase.from("roster_entries").select("player_id").in("slot_type", ["starting", "bench"]),
+        // Every roster row, staged drops included — see the pool comment in auction/page.tsx.
+        supabase.from("roster_entries").select("player_id"),
         supabase.from("roster_entries").select("team_id, player:players(position, fpl_team)").in("slot_type", ["starting", "bench"]),
       ])
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { freeDropsForType, getDropQuota, checkReDraftEligibility } from "@/lib/drops"
-import type { AuctionType } from "@/types"
+import { freeDropsForType, getDropQuota, checkReDraftEligibility, canSeeStagedDrops, maskStagedDrops } from "@/lib/drops"
+import type { AuctionType, Position, SlotType } from "@/types"
 
 // ─── freeDropsForType ─────────────────────────────────────────────────────────
 
@@ -121,3 +121,90 @@ describe("checkReDraftEligibility", () => {
   })
 })
 
+
+// ─── canSeeStagedDrops ────────────────────────────────────────────────────────
+
+describe("canSeeStagedDrops", () => {
+  it("lets admin and auction master see every team's staged drops", () => {
+    expect(canSeeStagedDrops("admin", null, "team-a")).toBe(true)
+    expect(canSeeStagedDrops("auction_master", null, "team-a")).toBe(true)
+  })
+
+  it("lets a team see only its own staged drops", () => {
+    expect(canSeeStagedDrops("team", "team-a", "team-a")).toBe(true)
+    expect(canSeeStagedDrops("team", "team-b", "team-a")).toBe(false)
+  })
+
+  it("hides staged drops from guests, and from a team account with no team linked", () => {
+    expect(canSeeStagedDrops("guest", null, "team-a")).toBe(false)
+    expect(canSeeStagedDrops("team", null, "team-a")).toBe(false)
+  })
+})
+
+// ─── maskStagedDrops ──────────────────────────────────────────────────────────
+
+type TestEntry = Parameters<typeof maskStagedDrops>[0][number] & { id: string }
+
+function entry(id: string, position: Position, slot_type: SlotType, opts: Partial<TestEntry> = {}): TestEntry {
+  return {
+    id, slot_type, bench_order: null, is_captain: false, is_vice_captain: false,
+    base_price: 1, player: { position }, ...opts,
+  }
+}
+
+/** A legal 11: 1 GK, 4 DEF, 4 MID, 2 FWD — plus a 4-man bench. */
+function fullSquad(): TestEntry[] {
+  return [
+    entry("gk1", "GK", "starting"),
+    ...["d1", "d2", "d3", "d4"].map(id => entry(id, "DEF", "starting")),
+    ...["m1", "m2", "m3", "m4"].map(id => entry(id, "MID", "starting")),
+    ...["f1", "f2"].map(id => entry(id, "FWD", "starting")),
+    entry("gk2", "GK", "bench", { bench_order: 1 }),
+    entry("d5", "DEF", "bench", { bench_order: 2 }),
+    entry("m5", "MID", "bench", { bench_order: 3 }),
+    entry("f3", "FWD", "bench", { bench_order: 4 }),
+  ]
+}
+
+describe("maskStagedDrops", () => {
+  it("returns the roster unchanged when nothing is staged", () => {
+    const roster = fullSquad()
+    expect(maskStagedDrops(roster)).toBe(roster)
+  })
+
+  it("puts a dropped starter back into the Starting XI gap it left", () => {
+    const roster = fullSquad().map(e => e.id === "m2" ? { ...e, slot_type: "dropped" as const, is_captain: false } : e)
+    const masked = maskStagedDrops(roster)
+    expect(masked.find(e => e.id === "m2")?.slot_type).toBe("starting")
+    expect(masked.filter(e => e.slot_type === "starting")).toHaveLength(11)
+    expect(masked).toHaveLength(15)
+  })
+
+  it("sends a dropped player to the end of the bench when the XI is already full", () => {
+    // d5 was on the bench and got dropped; the XI is untouched.
+    const roster = fullSquad().map(e => e.id === "d5" ? { ...e, slot_type: "dropped" as const, bench_order: null } : e)
+    const masked = maskStagedDrops(roster)
+    expect(masked.find(e => e.id === "d5")).toMatchObject({ slot_type: "bench", bench_order: 5 })
+  })
+
+  it("never fills an XI gap past a position's formation maximum", () => {
+    // Owner moved bench DEF d5 up (5 DEF, the max) then dropped MIDs m3+m4,
+    // leaving one XI gap; a pricier dropped DEF must not take it.
+    const roster = fullSquad()
+      .map(e => e.id === "d5" ? { ...e, slot_type: "starting" as const, bench_order: null } : e)
+      .map(e => (e.id === "m3" || e.id === "m4") ? { ...e, slot_type: "dropped" as const } : e)
+    roster.push(entry("d6", "DEF", "dropped", { base_price: 9 }))
+    const masked = maskStagedDrops(roster)
+    expect(masked.find(e => e.id === "d6")?.slot_type).toBe("bench")
+    expect(masked.filter(e => e.slot_type === "starting")).toHaveLength(11)
+    expect(masked.filter(e => e.slot_type === "starting" && e.player?.position === "DEF")).toHaveLength(5)
+  })
+
+  it("leaves no dropped rows and restores no captaincy", () => {
+    const roster = fullSquad().map(e => (e.id === "f1" || e.id === "gk2") ? { ...e, slot_type: "dropped" as const, bench_order: null } : e)
+    const masked = maskStagedDrops(roster)
+    expect(masked.some(e => e.slot_type === "dropped")).toBe(false)
+    expect(masked.some(e => e.is_captain || e.is_vice_captain)).toBe(false)
+    expect(masked).toHaveLength(15)
+  })
+})

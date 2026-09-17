@@ -1,5 +1,6 @@
-import { DROP_RULES } from "@/types"
-import type { AuctionType, DropQuotaSummary } from "@/types"
+import { DROP_RULES, SQUAD_RULES } from "@/types"
+import type { AuctionType, DropQuotaSummary, Position, Role, SlotType } from "@/types"
+import { roleIsAM } from "@/lib/role-utils"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any
 
@@ -126,3 +127,68 @@ export function checkReDraftEligibility(
   return null
 }
 
+// ─────────────────────────────────────────────
+// Staged-drop visibility
+// ─────────────────────────────────────────────
+//
+// A roster row with slot_type "dropped" is always a staged, not-yet-locked
+// drop: drops can only be staged while an auction is pending, and
+// rpc_lock_and_credit_drops deletes those rows when the auction starts. Until
+// then, only the owning team and the AM/admin may see them — other teams would
+// otherwise gain an edge from knowing who is about to hit the pool.
+//
+// This is app-level hiding only: RLS still lets any signed-in user read
+// roster_entries and team_drops directly. Every roster/drops view shown to
+// other teams must go through these helpers.
+
+/** Whether the viewer may see `teamId`'s staged drops: its own team, or AM/admin. */
+export function canSeeStagedDrops(role: Role, viewerTeamId: string | null | undefined, teamId: string): boolean {
+  return roleIsAM(role) || (!!viewerTeamId && viewerTeamId === teamId)
+}
+
+type MaskableEntry = {
+  slot_type: SlotType
+  bench_order: number | null
+  is_captain: boolean
+  is_vice_captain: boolean
+  base_price: number
+  player?: { position: Position } | null
+}
+
+/**
+ * Returns the roster as other teams should see it while drops are staged:
+ * every "dropped" row restored to an active slot, so the squad shows no gap,
+ * no staged section and no provisional budget.
+ *
+ * The original slot isn't stored (rpc_mark_drop overwrites it), so this is a
+ * best-effort reconstruction: dropped players (most expensive first) refill
+ * Starting XI gaps where the formation maximum for their position allows,
+ * and the rest go to the end of the bench. Captaincy is not restored.
+ */
+export function maskStagedDrops<T extends MaskableEntry>(roster: T[]): T[] {
+  const dropped = roster.filter(e => e.slot_type === "dropped")
+  if (dropped.length === 0) return roster
+
+  const result = roster.filter(e => e.slot_type !== "dropped")
+  const starting = result.filter(e => e.slot_type === "starting")
+  const startingByPos: Partial<Record<Position, number>> = {}
+  for (const e of starting) {
+    if (e.player) startingByPos[e.player.position] = (startingByPos[e.player.position] ?? 0) + 1
+  }
+  let startingCount = starting.length
+  let nextBenchOrder = Math.max(0, ...result.filter(e => e.slot_type === "bench").map(e => e.bench_order ?? 0)) + 1
+
+  for (const e of [...dropped].sort((a, b) => b.base_price - a.base_price)) {
+    const pos = e.player?.position
+    const fitsXI = startingCount < SQUAD_RULES.starting &&
+      (!pos || (startingByPos[pos] ?? 0) < SQUAD_RULES.max_starting[pos])
+    if (fitsXI) {
+      result.push({ ...e, slot_type: "starting", bench_order: null, is_captain: false, is_vice_captain: false })
+      startingCount++
+      if (pos) startingByPos[pos] = (startingByPos[pos] ?? 0) + 1
+    } else {
+      result.push({ ...e, slot_type: "bench", bench_order: nextBenchOrder++, is_captain: false, is_vice_captain: false })
+    }
+  }
+  return result
+}
