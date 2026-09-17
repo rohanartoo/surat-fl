@@ -192,3 +192,33 @@ export function maskStagedDrops<T extends MaskableEntry>(roster: T[]): T[] {
   }
   return result
 }
+
+export type PlayerOwner = { team_id: string; short_name: string; color: string; staged: boolean }
+
+/**
+ * Who owns each drafted player, for list views such as the Players page.
+ * Every roster row counts as ownership — a staged drop included — so a staged
+ * player never looks free before the auction locks the drop. `staged` is only
+ * true for viewers allowed to see that team's staged drops (canSeeStagedDrops);
+ * everyone else gets `false`, so the payload itself gives nothing away.
+ * Unowned players are simply absent.
+ */
+export function buildPlayerOwners(
+  rosterRows: { team_id: string; player_id: number; slot_type: SlotType }[],
+  teams: { id: string; short_name: string; color: string }[],
+  viewer: { role: Role; teamId: string | null | undefined },
+): Record<number, PlayerOwner> {
+  const teamById = new Map(teams.map(t => [t.id, t]))
+  const owners: Record<number, PlayerOwner> = {}
+  for (const row of rosterRows) {
+    const team = teamById.get(row.team_id)
+    if (!team) continue
+    owners[row.player_id] = {
+      team_id: team.id,
+      short_name: team.short_name,
+      color: team.color,
+      staged: row.slot_type === "dropped" && canSeeStagedDrops(viewer.role, viewer.teamId, row.team_id),
+    }
+  }
+  return owners
+}

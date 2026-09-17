@@ -2,7 +2,7 @@
 
 import { useAuction } from "./AuctionProvider"
 import { AuctionTimer } from "./AuctionTimer"
-import { PlayerSeasonStats } from "./PlayerSeasonStats"
+import { PlayerSeasonStats } from "@/components/players/PlayerSeasonStats"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { formatMoney, statusColor, statusLabel, cn } from "@/lib/utils"

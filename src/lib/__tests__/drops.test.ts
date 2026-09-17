@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { freeDropsForType, getDropQuota, checkReDraftEligibility, canSeeStagedDrops, maskStagedDrops } from "@/lib/drops"
+import { freeDropsForType, getDropQuota, checkReDraftEligibility, canSeeStagedDrops, maskStagedDrops, buildPlayerOwners } from "@/lib/drops"
 import type { AuctionType, Position, SlotType } from "@/types"
 
 // ─── freeDropsForType ─────────────────────────────────────────────────────────
@@ -206,5 +206,38 @@ describe("maskStagedDrops", () => {
     expect(masked.some(e => e.slot_type === "dropped")).toBe(false)
     expect(masked.some(e => e.is_captain || e.is_vice_captain)).toBe(false)
     expect(masked).toHaveLength(15)
+  })
+})
+
+// ─── buildPlayerOwners ────────────────────────────────────────────────────────
+
+describe("buildPlayerOwners", () => {
+  const teams = [
+    { id: "team-a", short_name: "TA", color: "#f00" },
+    { id: "team-b", short_name: "TB", color: "#00f" },
+  ]
+  const rows = [
+    { team_id: "team-a", player_id: 1, slot_type: "starting" as const },
+    { team_id: "team-a", player_id: 2, slot_type: "dropped" as const },
+    { team_id: "team-b", player_id: 3, slot_type: "bench" as const },
+  ]
+
+  it("maps each drafted player to its team and leaves unowned players out", () => {
+    const owners = buildPlayerOwners(rows, teams, { role: "guest", teamId: null })
+    expect(owners[1]).toEqual({ team_id: "team-a", short_name: "TA", color: "#f00", staged: false })
+    expect(owners[3]?.short_name).toBe("TB")
+    expect(owners[99]).toBeUndefined()
+  })
+
+  it("shows a staged drop as still owned, but not staged, to other teams and guests", () => {
+    for (const viewer of [{ role: "team" as const, teamId: "team-b" }, { role: "guest" as const, teamId: null }]) {
+      expect(buildPlayerOwners(rows, teams, viewer)[2]).toMatchObject({ short_name: "TA", staged: false })
+    }
+  })
+
+  it("marks the staged drop for its own team and for AM/admin", () => {
+    expect(buildPlayerOwners(rows, teams, { role: "team", teamId: "team-a" })[2]?.staged).toBe(true)
+    expect(buildPlayerOwners(rows, teams, { role: "auction_master", teamId: null })[2]?.staged).toBe(true)
+    expect(buildPlayerOwners(rows, teams, { role: "admin", teamId: null })[2]?.staged).toBe(true)
   })
 })

@@ -1,33 +1,17 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import { useAuction } from "./AuctionProvider"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { cn, formatMoney, positionColor, statusColor, statusLabel } from "@/lib/utils"
-import { PositionBadge } from "@/components/ui/PositionBadge"
-import { PlayerStatsPanel } from "./PlayerStatsPanel"
+import { cn, positionColor } from "@/lib/utils"
+import { PlayerListRow } from "@/components/players/PlayerListRow"
+import { SORT_OPTIONS, sortPlayers, type SortKey } from "@/lib/player-sort"
 import { roleIsAM } from "@/lib/role-utils"
 import type { Player, Position } from "@/types"
-
-// Per-viewer display order only — never persisted or shared, so it can't
-// change what anyone else (including the AM) sees. "tsb" matches the
-// server's selected_by_percent order, so the default view is unchanged.
-type SortKey = "tsb" | "points" | "price"
-
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: "tsb",    label: "Selected %" },
-  { key: "points", label: "Points" },
-  { key: "price",  label: "Price" },
-]
-
-function sortValue(player: Player, key: SortKey): number {
-  if (key === "points") return player.total_points
-  if (key === "price") return player.base_price
-  return player.selected_by_percent
-}
 
 export function PlayerSelectionPanel() {
   const { auction, currentLot, availablePlayers, myRole, refresh } = useAuction()
@@ -56,19 +40,14 @@ export function PlayerSelectionPanel() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    const matches = availablePlayers.filter(p => {
+    return sortPlayers(availablePlayers.filter(p => {
       if (currentPosition && p.position !== currentPosition) return false
       if (!q) return true
       return (
         p.web_name.toLowerCase().includes(q) ||
         p.fpl_team_short.toLowerCase().includes(q)
       )
-    })
-    if (sortBy === "tsb") return matches
-    return matches.sort((a, b) =>
-      sortValue(b, sortBy) - sortValue(a, sortBy) ||
-      b.selected_by_percent - a.selected_by_percent
-    )
+    }), sortBy)
   }, [availablePlayers, currentPosition, search, sortBy])
 
   async function openLot(playerId: number) {
@@ -107,6 +86,9 @@ export function PlayerSelectionPanel() {
             {filtered.length}
           </Badge>
         </div>
+        <Link href="/players" className="text-xs text-muted-foreground hover:text-emerald-500 transition-colors w-fit">
+          Scout all positions →
+        </Link>
         <Input
           placeholder="Search player or club…"
           className="h-8 text-sm mt-2"
@@ -137,102 +119,28 @@ export function PlayerSelectionPanel() {
             </p>
           ) : (
             filtered.map(player => (
-              <Fragment key={player.id}>
-                <PlayerRow
-                  player={player}
-                  isAM={isAM}
-                  canOpen={isAM && !hasOpenLot && auction?.status === "active"}
-                  isOpening={opening === player.id}
-                  onOpen={() => openLot(player.id)}
-                  isSelected={viewingId === player.id}
-                  sortBy={sortBy}
-                  onView={() => setViewing(viewingId === player.id ? null : player)}
-                />
-                {viewingId === player.id && (
-                  <div className="bg-accent/20 px-3 py-2.5">
-                    <PlayerStatsPanel player={player} />
-                  </div>
+              <PlayerListRow
+                key={player.id}
+                player={player}
+                sortBy={sortBy}
+                isExpanded={viewingId === player.id}
+                onToggle={() => setViewing(viewingId === player.id ? null : player)}
+                actions={isAM && !hasOpenLot && auction?.status === "active" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-xs px-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                    disabled={opening === player.id}
+                    onClick={e => { e.stopPropagation(); openLot(player.id) }}
+                  >
+                    {opening === player.id ? "…" : "Nominate"}
+                  </Button>
                 )}
-              </Fragment>
+              />
             ))
           )}
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-function PlayerRow({
-  player,
-  isAM,
-  canOpen,
-  isOpening,
-  onOpen,
-  isSelected,
-  sortBy,
-  onView,
-}: {
-  player: Player
-  isAM: boolean
-  canOpen: boolean
-  isOpening: boolean
-  onOpen: () => void
-  isSelected: boolean
-  sortBy: SortKey
-  onView: () => void
-}) {
-  return (
-    <div data-player-id={player.id} className={cn(
-      "flex items-center justify-between px-4 py-2.5 hover:bg-accent/40 transition-colors group",
-      isSelected && "bg-accent/60 hover:bg-accent/60",
-    )}>
-      <button
-        type="button"
-        className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer focus-visible:outline-none focus-visible:underline"
-        onClick={onView}
-        aria-expanded={isSelected}
-        title={isSelected ? "Hide stats" : "View stats"}
-      >
-        <PositionBadge position={player.position} />
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <p className="text-sm font-medium leading-none truncate">{player.web_name}</p>
-            {player.status !== "a" && (
-              <span className={cn("text-[10px] font-medium", statusColor(player.status))}>
-                {statusLabel(player.status)}
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">{player.fpl_team_short}</p>
-        </div>
-      </button>
-      <div className="flex items-center gap-3 shrink-0 ml-2">
-        {/* The figure the list is sorted by — FPL season points when sorting
-            by Points, otherwise selected-by % (price is always shown). */}
-        {sortBy === "points" ? (
-          <span className="text-xs font-mono font-semibold" title="Total FPL points this season">
-            {player.total_points} pts
-          </span>
-        ) : (
-          <span className="text-[10px] font-mono text-muted-foreground/60" title="Selected by (FPL)">
-            {player.selected_by_percent}%
-          </span>
-        )}
-        <span className="text-xs font-mono text-muted-foreground">
-          {formatMoney(player.base_price)}
-        </span>
-        {canOpen && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-6 text-xs px-2 opacity-0 group-hover:opacity-100 transition-opacity"
-            disabled={isOpening}
-            onClick={e => { e.stopPropagation(); onOpen() }}
-          >
-            {isOpening ? "…" : "Nominate"}
-          </Button>
-        )}
-      </div>
-    </div>
   )
 }

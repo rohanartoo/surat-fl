@@ -38,6 +38,10 @@ wipe cost nothing; now it costs the league its season:
 - `/dashboard` — Overview. Also carries the league table and (admin-only) the
   gameweek sync control. `/standings` is gone; it permanently redirects here.
 - `/team/[id]` — a team's squad, plus the Gameweek Performance pitch.
+- `/players` — scouting list of every player, tabbed by position, with
+  view-only stats (season, recent form, fixtures), sort, and a hide-drafted
+  toggle. The auction page's list stays filtered to the position being
+  auctioned; this page is where teams scout the rest.
 
 ## Auth
 - Users log in with a **username + password**. Email is hidden from the UI.
@@ -101,10 +105,12 @@ Season auction order: **initial → post-summer (end-Aug window) → minis → p
   (`rpc_lock_and_credit_drops` credits budgets and deletes the `dropped`
   roster rows). Until then only the owning team and AM/admin may see them:
   the staged-drops panel and its API are AM-only, the auction pool excludes
-  staged players, and team pages show other teams a masked squad. RLS still
+  staged players, team pages show other teams a masked squad, and the
+  Players page resolves ownership with `buildPlayerOwners`. RLS still
   lets any signed-in user read `roster_entries` / `team_drops` directly, so
   this is not real secrecy. **Any new view of rosters or drops shown to other
-  teams must go through `canSeeStagedDrops` / `maskStagedDrops`**
+  teams must go through `canSeeStagedDrops` / `maskStagedDrops` /
+  `buildPlayerOwners`**
   (`src/lib/drops.ts`), or it will leak who is about to hit the pool.
 - `team_drops.dropped_post_summer` is retained for history but **no longer affects eligibility** — a post-summer drop is a pre-January drop.
 
