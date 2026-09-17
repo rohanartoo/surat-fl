@@ -8,13 +8,33 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { cn, formatMoney, positionColor, statusColor, statusLabel } from "@/lib/utils"
 import { PositionBadge } from "@/components/ui/PositionBadge"
+import { PlayerStatsDialog } from "./PlayerStatsDialog"
 import { roleIsAM } from "@/lib/role-utils"
 import type { Player, Position } from "@/types"
+
+// Per-viewer display order only — never persisted or shared, so it can't
+// change what anyone else (including the AM) sees. "tsb" matches the
+// server's selected_by_percent order, so the default view is unchanged.
+type SortKey = "tsb" | "points" | "price"
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "tsb",    label: "Selected %" },
+  { key: "points", label: "Points" },
+  { key: "price",  label: "Price" },
+]
+
+function sortValue(player: Player, key: SortKey): number {
+  if (key === "points") return player.total_points
+  if (key === "price") return player.base_price
+  return player.selected_by_percent
+}
 
 export function PlayerSelectionPanel() {
   const { auction, currentLot, availablePlayers, myRole, refresh } = useAuction()
   const [search, setSearch] = useState("")
   const [opening, setOpening] = useState<number | null>(null)
+  const [sortBy, setSortBy] = useState<SortKey>("tsb")
+  const [viewing, setViewing] = useState<Player | null>(null)
 
   const isAM = roleIsAM(myRole)
   const currentPosition = auction?.current_position_category as Position | null
@@ -22,7 +42,7 @@ export function PlayerSelectionPanel() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    return availablePlayers.filter(p => {
+    const matches = availablePlayers.filter(p => {
       if (currentPosition && p.position !== currentPosition) return false
       if (!q) return true
       return (
@@ -30,7 +50,12 @@ export function PlayerSelectionPanel() {
         p.fpl_team_short.toLowerCase().includes(q)
       )
     })
-  }, [availablePlayers, currentPosition, search])
+    if (sortBy === "tsb") return matches
+    return matches.sort((a, b) =>
+      sortValue(b, sortBy) - sortValue(a, sortBy) ||
+      b.selected_by_percent - a.selected_by_percent
+    )
+  }, [availablePlayers, currentPosition, search, sortBy])
 
   async function openLot(playerId: number) {
     if (!auction) return
@@ -74,6 +99,21 @@ export function PlayerSelectionPanel() {
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
+        <div className="flex items-center gap-1 mt-2" role="group" aria-label="Sort players">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground mr-1">Sort</span>
+          {SORT_OPTIONS.map(({ key, label }) => (
+            <Button
+              key={key}
+              size="sm"
+              variant={sortBy === key ? "secondary" : "ghost"}
+              className="h-6 text-xs px-2"
+              aria-pressed={sortBy === key}
+              onClick={() => setSortBy(key)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <div className="max-h-[480px] overflow-y-auto divide-y divide-border/30">
@@ -90,11 +130,16 @@ export function PlayerSelectionPanel() {
                 canOpen={isAM && !hasOpenLot && auction?.status === "active"}
                 isOpening={opening === player.id}
                 onOpen={() => openLot(player.id)}
+                onView={() => setViewing(player)}
               />
             ))
           )}
         </div>
       </CardContent>
+      <PlayerStatsDialog
+        player={viewing}
+        onOpenChange={open => { if (!open) setViewing(null) }}
+      />
     </Card>
   )
 }
@@ -105,16 +150,23 @@ function PlayerRow({
   canOpen,
   isOpening,
   onOpen,
+  onView,
 }: {
   player: Player
   isAM: boolean
   canOpen: boolean
   isOpening: boolean
   onOpen: () => void
+  onView: () => void
 }) {
   return (
     <div className="flex items-center justify-between px-4 py-2.5 hover:bg-accent/40 transition-colors group">
-      <div className="flex items-center gap-3 min-w-0">
+      <button
+        type="button"
+        className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer focus-visible:outline-none focus-visible:underline"
+        onClick={onView}
+        title="View stats"
+      >
         <PositionBadge position={player.position} />
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
@@ -127,7 +179,7 @@ function PlayerRow({
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">{player.fpl_team_short}</p>
         </div>
-      </div>
+      </button>
       <div className="flex items-center gap-3 shrink-0 ml-2">
         <span className="text-[10px] font-mono text-muted-foreground/60" title="Selected by (FPL)">
           {player.selected_by_percent}%
@@ -141,7 +193,7 @@ function PlayerRow({
             variant="outline"
             className="h-6 text-xs px-2 opacity-0 group-hover:opacity-100 transition-opacity"
             disabled={isOpening}
-            onClick={onOpen}
+            onClick={e => { e.stopPropagation(); onOpen() }}
           >
             {isOpening ? "…" : "Nominate"}
           </Button>

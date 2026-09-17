@@ -1,5 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
-import type { FplBootstrap, FplPlayer, FplFixture, FplExplainFixture } from "@/types"
+import type {
+  FplBootstrap,
+  FplPlayer,
+  FplFixture,
+  FplExplainFixture,
+  FplElementSummary,
+  FplTeam,
+  PlayerSummary,
+} from "@/types"
 import { positionLabel } from "@/lib/utils"
 
 const FPL_BASE = "https://fantasy.premierleague.com/api"
@@ -58,6 +66,64 @@ export async function fetchFplFixtures(): Promise<FplFixture[]> {
   })
   if (!res.ok) throw new Error(`FPL fixtures API error: ${res.status}`)
   return res.json()
+}
+
+const SUMMARY_RECENT_COUNT = 5
+const SUMMARY_UPCOMING_COUNT = 3
+
+/**
+ * Trims FPL's element-summary to what the auction stats dialog shows: the
+ * last few played fixtures (newest first) and the next few scheduled ones,
+ * with opponent team ids resolved to short names. Fixtures without a
+ * gameweek yet (`event: null`, i.e. postponed and unscheduled) are skipped.
+ */
+export function mapFplPlayerSummary(
+  summary: FplElementSummary,
+  teams: FplTeam[]
+): PlayerSummary {
+  const shortName = new Map(teams.map(t => [t.id, t.short_name]))
+
+  const recent = summary.history
+    .slice(-SUMMARY_RECENT_COUNT)
+    .reverse()
+    .map(h => ({
+      round: h.round,
+      opponent_short: shortName.get(h.opponent_team) ?? "?",
+      was_home: h.was_home,
+      minutes: h.minutes,
+      total_points: h.total_points,
+      goals_scored: h.goals_scored,
+      assists: h.assists,
+      clean_sheets: h.clean_sheets,
+      bonus: h.bonus,
+    }))
+
+  const upcoming = summary.fixtures
+    .filter((f): f is typeof f & { event: number } => f.event !== null)
+    .slice(0, SUMMARY_UPCOMING_COUNT)
+    .map(f => ({
+      event: f.event,
+      opponent_short: shortName.get(f.is_home ? f.team_a : f.team_h) ?? "?",
+      is_home: f.is_home,
+      difficulty: f.difficulty,
+    }))
+
+  return { recent, upcoming }
+}
+
+export async function fetchFplPlayerSummary(playerId: number): Promise<PlayerSummary> {
+  const [res, bootstrap] = await Promise.all([
+    fetch(`${FPL_BASE}/element-summary/${playerId}/`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      // Shorter than bootstrap's hour: recent form changes during a gameweek,
+      // but seven teams browsing the pool shouldn't each hit FPL per click.
+      next: { revalidate: 900 },
+    }),
+    fetchFplBootstrap(),
+  ])
+  if (!res.ok) throw new Error(`FPL element-summary API error: ${res.status}`)
+  const summary: FplElementSummary = await res.json()
+  return mapFplPlayerSummary(summary, bootstrap.teams)
 }
 
 /**

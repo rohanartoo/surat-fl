@@ -104,6 +104,55 @@ export interface FplExplainFixture {
   stats: FplExplainStat[]
 }
 
+/**
+ * FPL's per-player element-summary/{id}/ response — only the fields read by
+ * mapFplPlayerSummary (src/lib/fpl.ts). `history` is this season's played
+ * fixtures, oldest first; `fixtures` is the remaining ones, soonest first.
+ */
+export interface FplElementSummary {
+  history: {
+    round: number
+    opponent_team: number
+    was_home: boolean
+    minutes: number
+    total_points: number
+    goals_scored: number
+    assists: number
+    clean_sheets: number
+    bonus: number
+  }[]
+  fixtures: {
+    event: number | null
+    team_h: number
+    team_a: number
+    is_home: boolean
+    difficulty: number
+  }[]
+}
+
+/** Trimmed player summary served by GET /api/fpl/player/[id] for the auction stats dialog. */
+export interface PlayerSummary {
+  /** Last few played fixtures, newest first. Points are raw FPL — never captain-doubled. */
+  recent: {
+    round: number
+    opponent_short: string
+    was_home: boolean
+    minutes: number
+    total_points: number
+    goals_scored: number
+    assists: number
+    clean_sheets: number
+    bonus: number
+  }[]
+  /** Next few scheduled fixtures, soonest first. */
+  upcoming: {
+    event: number
+    opponent_short: string
+    is_home: boolean
+    difficulty: number
+  }[]
+}
+
 export interface FplTeam {
   id: number
   name: string
