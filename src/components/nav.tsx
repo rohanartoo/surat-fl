@@ -13,13 +13,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Gavel, Users, User, Settings, LogOut, ArrowLeftRight, Menu, Search } from "lucide-react"
+import { LayoutDashboard, Gavel, Users, User, Settings, LogOut, ArrowLeftRight, Menu, Search, History } from "lucide-react"
 import type { Role } from "@/types"
 
 const navItems: { href: string; label: string; icon: typeof LayoutDashboard; roles?: Role[] }[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/auction", label: "Auction", icon: Gavel },
   { href: "/players", label: "Players", icon: Search },
+  { href: "/history", label: "History", icon: History },
   { href: "/my-team", label: "My Team", icon: User, roles: ["team"] },
   { href: "/teams", label: "Teams", icon: Users },
   // Standings merged into /dashboard ("Overview") — the two rendered the same

@@ -42,6 +42,11 @@ wipe cost nothing; now it costs the league its season:
   view-only stats (season, recent form, fixtures), sort, and a hide-drafted
   toggle. The auction page's list stays filtered to the position being
   auctioned; this page is where teams scout the rest.
+- `/history` — per-auction record of purchases (from `auction_lots`'
+  `winning_team_id`/`winning_bid`) and locked drops, a per-team summary, and
+  the full loan-transfer log. Auction chosen via `?auction=<id>`; only
+  active/completed auctions are listed, and only `status = 'locked'` drops are
+  read, so a pending auction's staged drops stay secret.
 
 ## Auth
 - Users log in with a **username + password**. Email is hidden from the UI.
