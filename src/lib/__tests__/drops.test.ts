@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { freeDropsForType, getDropQuota, checkReDraftEligibility, canSeeStagedDrops, maskStagedDrops, buildPlayerOwners } from "@/lib/drops"
+import { freeDropsForType, getDropQuota, checkReDraftEligibility, canSeeStagedDrops, maskStagedDrops, buildPlayerOwners, resetUnsoldPlayerPrices } from "@/lib/drops"
+import { calcDropPrice } from "@/lib/utils"
 import type { AuctionType, Position, SlotType } from "@/types"
 
 // ─── freeDropsForType ─────────────────────────────────────────────────────────
@@ -239,5 +240,117 @@ describe("buildPlayerOwners", () => {
     expect(buildPlayerOwners(rows, teams, { role: "team", teamId: "team-a" })[2]?.staged).toBe(true)
     expect(buildPlayerOwners(rows, teams, { role: "auction_master", teamId: null })[2]?.staged).toBe(true)
     expect(buildPlayerOwners(rows, teams, { role: "admin", teamId: null })[2]?.staged).toBe(true)
+  })
+})
+
+// ─── calcDropPrice ────────────────────────────────────────────────────────────
+
+// The half-price side of the pricing rule (see CLAUDE.md → League rules →
+// Pricing); resetUnsoldPlayerPrices below is what expires it after one auction.
+describe("calcDropPrice", () => {
+  const cases: [number, number][] = [
+    [10, 5],  // the league's own worked example
+    [12, 6],
+    [7, 4],   // odd fee rounds UP, never down
+    [1, 1],   // never below the £1m minimum bid
+  ]
+  it.each(cases)("a player bought for £%im drops to £%im", (paid, expected) => {
+    expect(calcDropPrice(paid)).toBe(expected)
+  })
+})
+
+// ─── resetUnsoldPlayerPrices ──────────────────────────────────────────────────
+
+type PlayerRow = { id: number; base_price: number }
+
+/**
+ * Minimal Supabase stand-in holding a players table and a roster, applying
+ * the filters resetUnsoldPlayerPrices actually uses (.gt on base_price,
+ * .not("id","in") on ids) so the assertions are about which rows move.
+ */
+function mockPriceDb(players: PlayerRow[], ownedIds: number[], opts: { rosterError?: string; updateError?: string } = {}) {
+  const filters = { gt: null as number | null, excluded: null as number[] | null }
+  const calls: { notIn: string[] } = { notIn: [] }
+
+  const playersChain = {
+    update: (patch: { base_price: number }) => {
+      playersChain._patch = patch
+      return playersChain
+    },
+    gt: (_col: string, value: number) => { filters.gt = value; return playersChain },
+    not: (_col: string, _op: string, list: string) => {
+      calls.notIn.push(list)
+      filters.excluded = list.replace(/[()]/g, "").split(",").filter(Boolean).map(Number)
+      return playersChain
+    },
+    select: () => {
+      if (opts.updateError) return Promise.resolve({ data: null, error: { message: opts.updateError } })
+      const matched = players.filter(p =>
+        (filters.gt === null || p.base_price > filters.gt) &&
+        !(filters.excluded ?? []).includes(p.id)
+      )
+      for (const p of matched) p.base_price = playersChain._patch.base_price
+      return Promise.resolve({ data: matched.map(p => ({ id: p.id })), error: null })
+    },
+    _patch: { base_price: 0 },
+  }
+
+  const rosterChain = {
+    select: () => rosterChain,
+    in: () => Promise.resolve(
+      opts.rosterError
+        ? { data: null, error: { message: opts.rosterError } }
+        : { data: ownedIds.map(player_id => ({ player_id })), error: null }
+    ),
+  }
+
+  return {
+    db: { from: (table: string) => (table === "players" ? playersChain : rosterChain) },
+    players,
+    calls,
+  }
+}
+
+describe("resetUnsoldPlayerPrices", () => {
+  it("drops an unsold player's stale half price back to £1m", async () => {
+    const { db, players } = mockPriceDb([{ id: 1, base_price: 5 }], [])
+    expect(await resetUnsoldPlayerPrices(db)).toEqual({ reset: 1 })
+    expect(players[0].base_price).toBe(1)
+  })
+
+  it("leaves a rostered player's price alone, however high", async () => {
+    const { db, players } = mockPriceDb([{ id: 1, base_price: 12 }, { id: 2, base_price: 6 }], [1])
+    expect(await resetUnsoldPlayerPrices(db)).toEqual({ reset: 1 })
+    expect(players.find(p => p.id === 1)!.base_price).toBe(12)
+    expect(players.find(p => p.id === 2)!.base_price).toBe(1)
+  })
+
+  it("is a no-op when every unsold player already sits at £1m", async () => {
+    const { db, players } = mockPriceDb([{ id: 1, base_price: 1 }, { id: 2, base_price: 9 }], [2])
+    expect(await resetUnsoldPlayerPrices(db)).toEqual({ reset: 0 })
+    expect(players.map(p => p.base_price)).toEqual([1, 9])
+  })
+
+  it("skips the exclusion filter entirely when no player is rostered — `in ()` is invalid syntax", async () => {
+    const { db, calls } = mockPriceDb([{ id: 1, base_price: 4 }], [])
+    await resetUnsoldPlayerPrices(db)
+    expect(calls.notIn).toEqual([])
+  })
+
+  it("de-duplicates owned ids rather than repeating them in the filter", async () => {
+    const { db, calls } = mockPriceDb([{ id: 9, base_price: 4 }], [3, 3, 4])
+    await resetUnsoldPlayerPrices(db)
+    expect(calls.notIn).toEqual(["(3,4)"])
+  })
+
+  it("throws on a roster read failure instead of resetting every price", async () => {
+    const { db, players } = mockPriceDb([{ id: 1, base_price: 7 }], [1], { rosterError: "boom" })
+    await expect(resetUnsoldPlayerPrices(db)).rejects.toThrow(/roster read: boom/)
+    expect(players[0].base_price).toBe(7)
+  })
+
+  it("throws when the price update itself fails", async () => {
+    const { db } = mockPriceDb([{ id: 1, base_price: 7 }], [], { updateError: "nope" })
+    await expect(resetUnsoldPlayerPrices(db)).rejects.toThrow(/update: nope/)
   })
 })

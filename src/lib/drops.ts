@@ -222,3 +222,52 @@ export function buildPlayerOwners(
   }
   return owners
 }
+
+// ─────────────────────────────────────────────
+// Unsold-player pricing
+// ─────────────────────────────────────────────
+
+/**
+ * Resets every unsold player's base price to £1m — the half-price discount a
+ * drop earns is a ONE-AUCTION offer, not a permanent one.
+ *
+ * A drop halves the player's price (calcDropPrice) for the auction the drop
+ * was staged for. If nobody buys them in that auction, the discount expires
+ * and they re-enter the pool at £1m for every later auction; a purchase sets
+ * the price back to the fee paid (rpc_assign_player).
+ *
+ * "Unsold" is simply "not on anybody's squad": a dropped player's
+ * roster_entries row is deleted when rpc_lock_and_credit_drops runs, so a
+ * staged drop can never look unowned here, and anyone else above £1m is
+ * carrying a stale discount by definition.
+ *
+ * Idempotent, so callers can re-run it freely. Called from handleEndDraft
+ * (the real trigger, once the auction completes) and defensively from
+ * handleStart.
+ */
+export async function resetUnsoldPlayerPrices(supabase: SupabaseClient): Promise<{ reset: number }> {
+  const { data: owned, error: ownedErr } = await supabase
+    .from("roster_entries")
+    .select("player_id")
+    .in("slot_type", ["starting", "bench"])
+  // Bail before writing: a transient read failure must not be mistaken for
+  // "nobody owns anyone", which would reset every rostered player's price too.
+  if (ownedErr) throw new Error(`resetUnsoldPlayerPrices roster read: ${ownedErr.message}`)
+
+  const ownedIds = [...new Set((owned ?? []).map((r: { player_id: number }) => r.player_id))]
+
+  let query = supabase
+    .from("players")
+    .update({ base_price: SQUAD_RULES.min_bid })
+    .gt("base_price", SQUAD_RULES.min_bid)
+  // An empty roster (pre-initial-auction) means no exclusion clause at all —
+  // `in ()` with no ids is not valid filter syntax.
+  if (ownedIds.length > 0) {
+    query = query.not("id", "in", `(${ownedIds.join(",")})`)
+  }
+
+  const { data: updated, error: updateErr } = await query.select("id")
+  if (updateErr) throw new Error(`resetUnsoldPlayerPrices update: ${updateErr.message}`)
+
+  return { reset: (updated ?? []).length }
+}

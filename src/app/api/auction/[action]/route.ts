@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { requireRole, getProfile } from "@/lib/roles"
 import { getNextBidder, isSoloWin, POSITION_ORDER, validateBid, validateFormation } from "@/lib/auction-engine"
-import { lockAndCommitDrops, checkReDraftEligibility, freeDropsForType, getCarryoverForTeam } from "@/lib/drops"
+import { lockAndCommitDrops, checkReDraftEligibility, freeDropsForType, getCarryoverForTeam, resetUnsoldPlayerPrices } from "@/lib/drops"
 import { getCurrentAuction } from "@/lib/auctions"
 import { getStandings } from "@/lib/scoring"
 import type { Position, AuctionType } from "@/types"
@@ -243,6 +243,14 @@ async function handleStart(request: NextRequest) {
   // stuck "pending" while the drop credit and roster removal already happened.
   let dropsLocked = false
   try {
+    // Safety net: expire any half price left over from a previous auction
+    // whose End Draft never ran (or predates that reset existing), BEFORE
+    // this auction's own drops are halved — otherwise a stale discount
+    // would quietly carry into a second window. Only touches unowned
+    // players, which auction_snapshots doesn't record, so cancel/restore is
+    // unaffected. See resetUnsoldPlayerPrices.
+    await resetUnsoldPlayerPrices(supabase)
+
     // For non-initial auctions, lock all staged drops now that we're active
     if (auction.type !== "initial") {
       await lockAndCommitDrops(auction_id, supabase)
@@ -999,5 +1007,22 @@ async function handleEndDraft(request: NextRequest) {
     .eq("id", auction_id)
 
   if (error) return err(error.message)
-  return NextResponse.json({ success: true })
+
+  // The auction is over, so every player still unsold loses the half-price
+  // discount a drop earned them and returns to £1m (see
+  // resetUnsoldPlayerPrices). Deliberately AFTER the status flip: resetting
+  // first and then failing to complete the auction would let the AM
+  // re-nominate a just-discounted player at £1m inside the same window.
+  // handleStart re-runs it, so a failure here self-heals next auction.
+  const { reset } = await resetUnsoldPlayerPrices(supabase)
+
+  // Best-effort: the log is a record of what happened, never a reason to
+  // fail an auction that has already completed.
+  await supabase.from("auction_log").insert({
+    auction_id,
+    action_type: "prices_reset",
+    payload: { players_reset: reset },
+  })
+
+  return NextResponse.json({ success: true, prices_reset: reset })
 }

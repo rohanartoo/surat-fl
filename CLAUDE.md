@@ -96,6 +96,29 @@ wipe cost nothing; now it costs the league its season:
 - If everyone else folds before any bid is placed, the last team standing wins at base price (same as the solo-interest rule). The AM still confirms via Assign.
 - Max bid = budget − (empty slots − 1), ensuring team can fill remaining slots at £1m each.
 
+### Pricing
+- A player's `players.base_price` is the floor for the next opening bid. It
+  starts at £1m, and winning a lot sets it to the fee paid (`rpc_assign_player`).
+- A drop **halves** it, rounded up, floor £1m (`calcDropPrice`,
+  `DROP_RULES.drop_price_factor`). The new price is written when the AM
+  *starts* the auction the drop was staged for, by `rpc_lock_and_credit_drops`.
+- **That discount lasts exactly one auction.** If nobody buys the player
+  before that auction completes, End Draft resets them to £1m for every
+  later auction (`resetUnsoldPlayerPrices` in `src/lib/drops.ts`). So
+  £10m → dropped £5m → unsold £1m; bought again at £12m → dropped £6m →
+  unsold £1m. Without this the half price was permanent, which was never the
+  intent: it is a one-window incentive to re-sign a dropped player, not a
+  standing markdown.
+- "Unsold" means "on nobody's squad". A locked drop deletes the
+  `roster_entries` row, so any unowned player above £1m is carrying a stale
+  discount by definition — which is why the reset doesn't need to consult
+  `team_drops`.
+- The reset fires on **End Draft only**. `handleStart` re-runs it as a
+  self-healing net before locking the new drops, so an auction left active
+  forever (or one ended before this rule shipped) is cleaned up at the next
+  auction start rather than keeping the discount. A *cancelled* auction
+  instead restores the pre-auction snapshot (`rpc_cancel_auction`).
+
 ### Auction types & drop quotas
 | Auction type | Free transfers | Max rollover |
 |---|---|---|
